@@ -22,7 +22,10 @@
         // --- 3. CONFIGURE O SUPABASE AQUI ---
         const SUPABASE_URL = 'https://mcsiygkjmwhyvaqroddi.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jc2l5Z2tqbXdoeXZhcXJvZGRpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYxODMyNDUsImV4cCI6MjA3MTc1OTI0NX0.GDCe18wOgb9Sz0UDrINUXDKE3wEcOJuTlyRIlaU2pGs';
-        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        // Extrai a função 'createClient' do objeto global 'supabase'
+        const { createClient } = supabase; 
+        // Cria a instância do cliente com um nome diferente para evitar conflito
+        const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
         // --- LÓGICA DO WIDGET ---
         const startButton = document.getElementById('startButton');
