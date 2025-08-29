@@ -3,10 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <title>Widget de Gravação de Áudio</title>
-    <script src="https://js.jotform.com/JFCustomWidget.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://js.jotform.com/JFCustomWidget.min.js?onload=onJotformReady"></script>
+    
     <style>
-        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background-color: #f4f4f4; }
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background-color: #f4f4f4; text-align: center; }
         button { padding: 10px 20px; font-size: 16px; cursor: pointer; border: none; border-radius: 5px; margin: 5px; }
         #startButton { background-color: #28a745; color: white; }
         #stopButton { background-color: #dc3545; color: white; }
@@ -14,83 +15,11 @@
     </style>
 </head>
 <body>
+    <h3>Gravador de Auditoria</h3>
     <button id="startButton">▶️ Iniciar Gravação</button>
     <button id="stopButton" disabled>⏹️ Parar Gravação</button>
-    <div id="status">Status: Em teste 2</div>
+    <div id="status">Status: Carregando...</div>
 
-    <script>
-        // --- 3. CONFIGURE O SUPABASE AQUI ---
-        const SUPABASE_URL = 'https://mcsiygkjmwhyvaqroddi.supabase.co';
-        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jc2l5Z2tqbXdoeXZhcXJvZGRpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYxODMyNDUsImV4cCI6MjA3MTc1OTI0NX0.GDCe18wOgb9Sz0UDrINUXDKE3wEcOJuTlyRIlaU2pGs';
-        // Extrai a função 'createClient' do objeto global 'supabase'
-        const { createClient } = supabase; 
-        // Cria a instância do cliente com um nome diferente para evitar conflito
-        const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-        // --- LÓGICA DO WIDGET ---
-        const startButton = document.getElementById('startButton');
-        const stopButton = document.getElementById('stopButton');
-        const statusDiv = document.getElementById('status');
-        
-        let mediaRecorder;
-        let audioChunks = [];
-
-        JFCustomWidget.subscribe('ready', () => {
-            console.log('Widget pronto!');
-        });
-
-        startButton.onclick = async () => {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                mediaRecorder = new MediaRecorder(stream);
-                
-                mediaRecorder.ondataavailable = event => {
-                    audioChunks.push(event.data);
-                };
-
-                mediaRecorder.onstop = async () => {
-                    statusDiv.textContent = 'Status: Processando e fazendo upload...';
-                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-                    const fileName = `gravacao-${Date.now()}.webm`;
-
-                    // 4. FAZ O UPLOAD PARA O SUPABASE STORAGE
-                    const { data, error } = await supabase
-                        .storage
-                        .from('audio-auditoria') // Nome do seu bucket
-                        .upload(fileName, audioBlob);
-
-                    if (error) {
-                        throw error;
-                    }
-                    
-                    // 5. OBTÉM A URL PÚBLICA E ENVIA PARA O JOTFORM
-                    const { data: { publicUrl } } = supabase
-                        .storage
-                        .from('audio-auditoria')
-                        .getPublicUrl(fileName);
-
-                    statusDiv.textContent = `Status: Upload Concluído!`;
-                    JFCustomWidget.sendSubmit({ valid: true, value: publicUrl });
-                    console.log('URL enviada para o Jotform:', publicUrl);
-                };
-
-                audioChunks = [];
-                mediaRecorder.start();
-                statusDiv.textContent = 'Status: Gravando... 🔴';
-                startButton.disabled = true;
-                stopButton.disabled = false;
-
-            } catch (err) {
-                statusDiv.textContent = 'Erro ao acessar microfone. Verifique as permissões.';
-                console.error("Erro no microfone:", err);
-            }
-        };
-
-        stopButton.onclick = () => {
-            mediaRecorder.stop();
-            startButton.disabled = false;
-            stopButton.disabled = true;
-        };
-    </script>
+    <script src="main.js"></script>
 </body>
 </html>
