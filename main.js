@@ -17,7 +17,9 @@ function onJotformReady() {
         let mediaRecorder;
         let audioChunks = [];
 
-        startButton.onclick = async () => {
+        // --- MUDANÇA PRINCIPAL AQUI ---
+        // Trocando .onclick por .addEventListener
+        const startRecording = async () => {
             statusDiv.textContent = 'Status: Solicitando permissão...';
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -54,12 +56,16 @@ function onJotformReady() {
             }
         };
 
-        stopButton.onclick = () => {
+        const stopRecording = () => {
             if (mediaRecorder) {
                 mediaRecorder.stop();
                 startButton.disabled = false;
                 stopButton.disabled = true;
             }
         };
+        
+        startButton.addEventListener('click', startRecording);
+        stopButton.addEventListener('click', stopRecording);
+
     });
 }
