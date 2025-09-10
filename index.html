@@ -11,29 +11,39 @@
         h3 { margin-top: 0; color: #343a40; }
         button { display: flex; align-items: center; justify-content: center; width: 100%; padding: 12px; font-size: 16px; font-weight: 600; cursor: pointer; border: none; border-radius: 6px; margin-top: 12px; transition: background-color 0.2s; }
         button svg { margin-right: 8px; }
-        #startButton { background-color: #28a745; color: white; }
-        #stopButton { background-color: #dc3545; color: white; }
+        .btn-primary { background-color: #007bff; color: white; }
+        .btn-success { background-color: #28a745; color: white; }
+        .btn-danger { background-color: #dc3545; color: white; }
         button:disabled { background-color: #ced4da; cursor: not-allowed; }
         #status-container { margin-top: 20px; padding: 10px; border-radius: 6px; font-weight: 500; }
-        .status-prompt { background-color: #fff3cd; color: #856404; } /* Amarelo */
-        .status-denied { background-color: #f8d7da; color: #721c24; } /* Vermelho */
-        .status-ready { background-color: #d4edda; color: #155724; }  /* Verde */
-        .status-recording { background-color: #cce5ff; color: #004085; } /* Azul */
+        .status-info { background-color: #cce5ff; color: #004085; } /* Azul */
+        .status-error { background-color: #f8d7da; color: #721c24; } /* Vermelho */
+        .status-success { background-color: #d4edda; color: #155724; }  /* Verde */
+        /* Classe para esconder elementos */
+        .hidden { display: none; }
     </style>
 </head>
 <body>
     <div class="container">
         <h3>Gravador de Auditoria</h3>
-        <button id="startButton" disabled>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>
-            Iniciar Gravação
-        </button>
-        <button id="stopButton" disabled>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"></path></svg>
-            Parar Gravação
-        </button>
-        <div id="status-container">
-            <span id="status-text">Verificando permissões...</span>
+
+        <div id="permission-step">
+            <button id="checkPermissionButton" class="btn-primary">Verificar Permissão do Microfone</button>
+        </div>
+
+        <div id="recording-step" class="hidden">
+            <button id="startButton" class="btn-success">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>
+                Iniciar Gravação
+            </button>
+            <button id="stopButton" class="btn-danger" disabled>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"></path></svg>
+                Parar Gravação
+            </button>
+        </div>
+
+        <div id="status-container" class="status-info">
+            <span id="status-text">Clique no botão para começar</span>
         </div>
     </div>
     <script src="main.js"></script>

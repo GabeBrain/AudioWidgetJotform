@@ -1,12 +1,20 @@
+// --- CONFIGURAÇÃO DO SUPABASE ---
+        // const SUPABASE_URL = 'https://mcsiygkjmwhyvaqroddi.supabase.co';
+        // const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jc2l5Z2tqbXdoeXZhcXJvZGRpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYxODMyNDUsImV4cCI6MjA3MTc1OTI0NX0.GDCe18wOgb9Sz0UDrINUXDKE3wEcOJuTlyRIlaU2pGs';
+    
 function onJotformReady() {
     JFCustomWidget.subscribe("ready", function(){
         
         // --- ELEMENTOS DA INTERFACE ---
-        const statusContainer = document.getElementById('status-container');
-        const statusText = document.getElementById('status-text');
+        const permissionStep = document.getElementById('permission-step');
+        const recordingStep = document.getElementById('recording-step');
+        const checkPermissionButton = document.getElementById('checkPermissionButton');
         const startButton = document.getElementById('startButton');
         const stopButton = document.getElementById('stopButton');
+        const statusContainer = document.getElementById('status-container');
+        const statusText = document.getElementById('status-text');
 
+        
         // --- CONFIGURAÇÃO DO SUPABASE ---
         const SUPABASE_URL = 'https://mcsiygkjmwhyvaqroddi.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jc2l5Z2tqbXdoeXZhcXJvZGRpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYxODMyNDUsImV4cCI6MjA3MTc1OTI0NX0.GDCe18wOgb9Sz0UDrINUXDKE3wEcOJuTlyRIlaU2pGs';
@@ -18,82 +26,78 @@ function onJotformReady() {
         let audioChunks = [];
 
         // --- FUNÇÃO PARA ATUALIZAR A INTERFACE ---
-        function updateUI(state, message) {
-            statusContainer.className = `status-${state}`;
+        function updateUI(message, stateClass) {
             statusText.textContent = message;
-
-            startButton.disabled = !['ready', 'prompt'].includes(state);
-            stopButton.disabled = state !== 'recording';
+            statusContainer.className = `status-${stateClass}`;
         }
 
-        // --- LÓGICA PRINCIPAL DE VERIFICAÇÃO DE PERMISSÃO ---
-        async function checkPermissions() {
-            if (!navigator.permissions) {
-                updateUI('prompt', 'Navegador não suporta API de permissões. Clique para iniciar.');
-                return;
-            }
+        // --- LÓGICA PRINCIPAL ---
+
+        // PASSO 1: O usuário clica para checar a permissão
+        checkPermissionButton.addEventListener('click', async () => {
+            updateUI('Verificando permissões...', 'info');
             try {
                 const permissionStatus = await navigator.permissions.query({ name: 'microphone' });
-
+                
                 if (permissionStatus.state === 'granted') {
-                    updateUI('ready', 'Status: Pronto para gravar!');
+                    updateUI('Permissão já concedida. Pronto para gravar.', 'success');
+                    permissionStep.classList.add('hidden');
+                    recordingStep.classList.remove('hidden');
                 } else if (permissionStatus.state === 'prompt') {
-                    updateUI('prompt', 'Status: Requer permissão do microfone.');
+                    updateUI("Permissão necessária. Clique em 'Iniciar Gravação' para solicitar.", 'info');
+                    permissionStep.classList.add('hidden');
+                    recordingStep.classList.remove('hidden');
                 } else if (permissionStatus.state === 'denied') {
-                    updateUI('denied', 'Status: Permissão negada. Habilite o microfone nas configurações do site.');
+                    updateUI('Permissão negada. Habilite o microfone nas configurações do site para continuar.', 'error');
+                    checkPermissionButton.disabled = true;
                 }
-
-                // Observa mudanças na permissão (ex: o usuário muda nas configs)
-                permissionStatus.onchange = () => checkPermissions();
-
             } catch (err) {
-                console.error("Erro ao checar permissões:", err);
-                updateUI('denied', 'Erro ao verificar permissões. Verifique o console.');
+                console.error("Erro ao verificar permissão:", err);
+                updateUI(`Erro ao checar permissão: ${err.message}`, 'error');
             }
-        }
+        });
 
-        // --- LÓGICA DE GRAVAÇÃO ---
-        const startRecording = async () => {
-            updateUI('recording', 'Status: Solicitando permissão...');
+        // PASSO 2: O usuário clica para iniciar a gravação (que também pede permissão se necessário)
+        startButton.addEventListener('click', async () => {
+            updateUI('Solicitando permissão...', 'info');
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 mediaRecorder = new MediaRecorder(stream);
+                
                 mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
+
                 mediaRecorder.onstop = async () => {
-                    updateUI('ready', 'Status: Processando e fazendo upload...');
+                    updateUI('Processando e fazendo upload...', 'info');
                     const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
                     const fileName = `gravacao-${Date.now()}.webm`;
 
                     const { data, error } = await supabaseClient.storage.from('audio-auditoria').upload(fileName, audioBlob);
-                    
-                    if (error) { throw error; }
+                    if (error) throw error;
 
                     const { data: { publicUrl } } = supabaseClient.storage.from('audio-auditoria').getPublicUrl(fileName);
-                    updateUI('ready', 'Upload Concluído!');
+                    updateUI('Upload Concluído!', 'success');
                     JFCustomWidget.sendSubmit({ valid: true, value: publicUrl });
+                    startButton.disabled = false;
+                    stopButton.disabled = true;
                 };
-                
+
                 audioChunks = [];
                 mediaRecorder.start();
-                updateUI('recording', 'Status: Gravando... 🔴');
+                updateUI('Gravando... 🔴', 'info');
+                startButton.disabled = true;
+                stopButton.disabled = false;
             } catch (err) {
                 console.error("ERRO AO INICIAR GRAVAÇÃO:", err);
-                // Se o erro for de permissão negada, o checkPermissions já terá atualizado a UI
-                if(err.name !== 'NotAllowedError') {
-                    updateUI('denied', `Erro: ${err.name}`);
-                } else {
-                    checkPermissions(); // Re-verifica para mostrar status 'denied'
+                updateUI(`Erro: ${err.name}. Verifique as permissões.`, 'error');
+                // Se a permissão foi negada no pop-up, atualiza a UI permanentemente
+                if (err.name === 'NotAllowedError') {
+                    startButton.disabled = true;
                 }
             }
-        };
+        });
 
-        const stopRecording = () => {
+        stopButton.addEventListener('click', () => {
             if (mediaRecorder) mediaRecorder.stop();
-        };
-        
-        // --- INICIALIZAÇÃO ---
-        startButton.addEventListener('click', startRecording);
-        stopButton.addEventListener('click', stopRecording);
-        checkPermissions(); // Verifica as permissões assim que o widget carrega
+        });
     });
 }
