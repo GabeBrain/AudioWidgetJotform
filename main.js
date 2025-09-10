@@ -4,7 +4,7 @@ function onJotformReady() {
         const statusDiv = document.getElementById('status');
         statusDiv.textContent = 'Status: Ocioso';
 
-        // Insira suas chaves do Supabase aqui
+
         const SUPABASE_URL = 'https://mcsiygkjmwhyvaqroddi.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jc2l5Z2tqbXdoeXZhcXJvZGRpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYxODMyNDUsImV4cCI6MjA3MTc1OTI0NX0.GDCe18wOgb9Sz0UDrINUXDKE3wEcOJuTlyRIlaU2pGs';
         
@@ -13,46 +13,40 @@ function onJotformReady() {
 
         const startButton = document.getElementById('startButton');
         const stopButton = document.getElementById('stopButton');
-        
+
         let mediaRecorder;
         let audioChunks = [];
 
-        // --- MUDANÇA PRINCIPAL AQUI ---
-        // Trocando .onclick por .addEventListener
+        
         const startRecording = async () => {
             statusDiv.textContent = 'Status: Solicitando permissão...';
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 mediaRecorder = new MediaRecorder(stream);
-                
-                mediaRecorder.ondataavailable = event => {
-                    audioChunks.push(event.data);
-                };
-
+                mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
                 mediaRecorder.onstop = async () => {
                     statusDiv.textContent = 'Status: Processando e fazendo upload...';
                     const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
                     const fileName = `gravacao-${Date.now()}.webm`;
-
+        
                     const { data, error } = await supabaseClient.storage.from('audio-auditoria').upload(fileName, audioBlob);
-                    
+        
                     if (error) { throw error; }
-                    
+        
                     const { data: { publicUrl } } = supabaseClient.storage.from('audio-auditoria').getPublicUrl(fileName);
-
-                    statusDiv.textContent = `Status: Upload Concluído!`;
+                    statusDiv.textContent = 'Status: Upload Concluído!';
                     JFCustomWidget.sendSubmit({ valid: true, value: publicUrl });
                 };
-
+        
                 audioChunks = [];
                 mediaRecorder.start();
                 statusDiv.textContent = 'Status: Gravando... 🔴';
                 startButton.disabled = true;
                 stopButton.disabled = false;
-
+        
             } catch (err) {
-                console.error("ERRO CRÍTICO DENTRO DO startButton.onclick:", err);
-                statusDiv.textContent = `Erro: ${err.name}. Verifique o console.`;
+                console.error("ERRO CRÍTICO:", err);
+                statusDiv.textContent = `Erro: ${err.name}.`;
             }
         };
 
@@ -66,6 +60,6 @@ function onJotformReady() {
         
         startButton.addEventListener('click', startRecording);
         stopButton.addEventListener('click', stopRecording);
-
+    
     });
-}
+}      
