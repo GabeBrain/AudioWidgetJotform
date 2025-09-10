@@ -25,13 +25,16 @@
 <body>
     <div class="container">
         <h3>Gravador de Auditoria</h3>
+
         <div id="permission-step">
-            <button id="checkPermissionButton" class="btn-primary">Verificar Permissão do Microfone</button>
+            <button id="checkPermissionButton" class="btn-primary" onclick="checkPermission()">Verificar Permissão do Microfone</button>
         </div>
+
         <div id="recording-step" class="hidden">
-            <button id="startButton" class="btn-success"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>Iniciar Gravação</button>
-            <button id="stopButton" class="btn-danger" disabled><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"></path></svg>Parar Gravação</button>
+            <button id="startButton" class="btn-success" onclick="startRecording()"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>Iniciar Gravação</button>
+            <button id="stopButton" class="btn-danger" disabled onclick="stopRecording()"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"></path></svg>Parar Gravação</button>
         </div>
+
         <div id="status-container" class="status-info">
             <span id="status-text">Clique no botão para começar</span>
         </div>
