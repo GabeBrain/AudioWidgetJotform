@@ -11,34 +11,116 @@
         h3 { margin-top: 0; color: #343a40; }
         button { display: flex; align-items: center; justify-content: center; width: 100%; padding: 12px; font-size: 16px; font-weight: 600; cursor: pointer; border: none; border-radius: 6px; margin-top: 12px; transition: background-color 0.2s; }
         button svg { margin-right: 8px; }
-        .btn-primary { background-color: #007bff; color: white; }
-        .btn-success { background-color: #28a745; color: white; }
-        .btn-danger { background-color: #dc3545; color: white; }
+        .btn-primary { background-color: #007bff; color: white; } /* Azul */
+        .btn-warning { background-color: #ffc107; color: #212529; } /* Amarelo */
+        .btn-success { background-color: #28a745; color: white; } /* Verde */
+        .btn-danger { background-color: #dc3545; color: white; }  /* Vermelho */
         button:disabled { background-color: #ced4da; cursor: not-allowed; }
-        #status-container { margin-top: 20px; padding: 10px; border-radius: 6px; font-weight: 500; }
-        .status-info { background-color: #cce5ff; color: #004085; }
-        .status-error { background-color: #f8d7da; color: #721c24; }
-        .status-success { background-color: #d4edda; color: #155724; }
         .hidden { display: none; }
     </style>
 </head>
 <body>
     <div class="container">
         <h3>Gravador de Auditoria</h3>
-
         <div id="permission-step">
-            <button id="checkPermissionButton" class="btn-primary" onclick="checkPermission()">Verificar Permissão do Microfone</button>
+            <button id="permissionButton" class="btn-primary" onclick="requestPermission()">Verificar Permissão</button>
         </div>
-
         <div id="recording-step" class="hidden">
             <button id="startButton" class="btn-success" onclick="startRecording()"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>Iniciar Gravação</button>
             <button id="stopButton" class="btn-danger" disabled onclick="stopRecording()"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"></path></svg>Parar Gravação</button>
         </div>
-
-        <div id="status-container" class="status-info">
-            <span id="status-text">Clique no botão para começar</span>
-        </div>
+        <p id="status-text" style="font-weight: bold; margin-top: 15px;">Clique no botão para começar</p>
     </div>
-    <script src="main.js"></script>
+
+    <script>
+        // --- TODO O CÓDIGO AGORA ESTÁ DENTRO DE UM ÚNICO ARQUIVO ---
+
+        // Declaração de variáveis globais para acesso
+        let mediaRecorder;
+        let audioChunks = [];
+        let supabaseClient;
+
+        // Função principal chamada pelo Jotform quando tudo estiver pronto
+        function onJotformReady() {
+            JFCustomWidget.subscribe("ready", function(){
+                console.log("Jotform está pronto.");
+                // Inicializa o cliente Supabase
+                const SUPABASE_URL = 'SUA_URL_DO_PROJETO_SUPABASE_AQUI';
+                const SUPABASE_ANON_KEY = 'SUA_CHAVE_ANON_PUBLIC_AQUI';
+                const { createClient } = supabase;
+                supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            });
+        }
+
+        // Função para atualizar o botão de permissão
+        function updatePermissionButton(text, className, disabled = false) {
+            const btn = document.getElementById('permissionButton');
+            btn.textContent = text;
+            btn.className = `btn-${className}`;
+            btn.disabled = disabled;
+        }
+
+        // Função chamada pelo ONCLICK do botão de permissão
+        async function requestPermission() {
+            console.log("Clicado! Tentando verificar permissão...");
+            // PASSO 1: Feedback visual IMEDIATO
+            updatePermissionButton("Verificando... O pop-up deve aparecer", 'warning', true);
+
+            try {
+                // PASSO 2: Tenta acessar o microfone
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // Se chegar aqui, a permissão foi concedida
+                console.log("Permissão concedida!");
+                document.getElementById('permission-step').classList.add('hidden');
+                document.getElementById('recording-step').classList.remove('hidden');
+                document.getElementById('status-text').textContent = 'Status: Pronto para gravar!';
+
+                // Para a trilha do microfone para não deixar o ícone de gravação ativo
+                stream.getTracks().forEach(track => track.stop());
+
+            } catch (err) {
+                // Se chegar aqui, a permissão foi negada
+                console.error("Permissão negada:", err);
+                updatePermissionButton("Permissão Negada", 'danger', true);
+                document.getElementById('status-text').textContent = "Habilite o microfone nas configurações do seu navegador para continuar.";
+            }
+        }
+
+        // Funções de gravação (permanecem as mesmas)
+        async function startRecording() {
+            const statusText = document.getElementById('status-text');
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
+                mediaRecorder.onstop = async () => {
+                    statusText.textContent = 'Processando e fazendo upload...';
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    const fileName = `gravacao-${Date.now()}.webm`;
+                    const { data, error } = await supabaseClient.storage.from('audio-auditoria').upload(fileName, audioBlob);
+                    if (error) throw error;
+                    const { data: { publicUrl } } = supabaseClient.storage.from('audio-auditoria').getPublicUrl(fileName);
+                    statusText.textContent = 'Upload Concluído!';
+                    JFCustomWidget.sendSubmit({ valid: true, value: publicUrl });
+                    document.getElementById('startButton').disabled = false;
+                    document.getElementById('stopButton').disabled = true;
+                };
+                audioChunks = [];
+                mediaRecorder.start();
+                statusText.textContent = 'Gravando... 🔴';
+                document.getElementById('startButton').disabled = true;
+                document.getElementById('stopButton').disabled = false;
+            } catch (err) {
+                statusText.textContent = `Erro: ${err.name}`;
+            }
+        }
+
+        function stopRecording() {
+            if (mediaRecorder) {
+                mediaRecorder.stop();
+            }
+        }
+    </script>
 </body>
 </html>
