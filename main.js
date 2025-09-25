@@ -1,7 +1,3 @@
-// --- CONFIGURAÇÃO DO SUPABASE ---
-        // const SUPABASE_URL = 'https://mcsiygkjmwhyvaqroddi.supabase.co';
-        // const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jc2l5Z2tqbXdoeXZhcXJvZGRpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYxODMyNDUsImV4cCI6MjA3MTc1OTI0NX0.GDCe18wOgb9Sz0UDrINUXDKE3wEcOJuTlyRIlaU2pGs';
-
 function onJotformReady() {
     
     // --- MUDANÇA PRINCIPAL: INICIALIZAÇÃO DO CLIENTE NO ESCOPO SUPERIOR ---
@@ -17,58 +13,60 @@ function onJotformReady() {
         const statusDiv = document.getElementById('status');
         statusDiv.textContent = 'Status: Ocioso';
 
-        // Insira suas chaves do Supabase aqui
-        const SUPABASE_URL = 'https://mcsiygkjmwhyvaqroddi.supabase.co';
-        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jc2l5Z2tqbXdoeXZhcXJvZGRpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYxODMyNDUsImV4cCI6MjA3MTc1OTI0NX0.GDCe18wOgb9Sz0UDrINUXDKE3wEcOJuTlyRIlaU2pGs';
-        
-        const { createClient } = supabase;
-        const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
         const startButton = document.getElementById('startButton');
         const stopButton = document.getElementById('stopButton');
         
         let mediaRecorder;
         let audioChunks = [];
 
-        // --- MUDANÇA PRINCIPAL AQUI ---
-        // Trocando .onclick por .addEventListener
         const startRecording = async () => {
             statusDiv.textContent = 'Status: Solicitando permissão...';
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 mediaRecorder = new MediaRecorder(stream);
-                mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
+                
+                mediaRecorder.ondataavailable = event => {
+                    audioChunks.push(event.data);
+                };
+
                 mediaRecorder.onstop = async () => {
-                    updateUI('Processando e fazendo upload...', 'info');
+                    statusDiv.textContent = 'Status: Processando e fazendo upload...';
                     const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
                     const fileName = `gravacao-${Date.now()}.webm`;
 
+                    // Agora 'supabaseClient' estará definido e acessível aqui.
                     const { data, error } = await supabaseClient.storage.from('audio-auditoria').upload(fileName, audioBlob);
-                    if (error) throw error;
+                    
+                    if (error) { throw error; }
+                    
                     const { data: { publicUrl } } = supabaseClient.storage.from('audio-auditoria').getPublicUrl(fileName);
-                    updateUI('Upload Concluído!', 'success');
+
+                    statusDiv.textContent = `Status: Upload Concluído!`;
                     JFCustomWidget.sendSubmit({ valid: true, value: publicUrl });
-                    startButton.disabled = false;
-                    stopButton.disabled = true;
                 };
+
                 audioChunks = [];
                 mediaRecorder.start();
-                updateUI('Gravando... 🔴', 'info');
+                statusDiv.textContent = 'Status: Gravando... 🔴';
                 startButton.disabled = true;
                 stopButton.disabled = false;
+
             } catch (err) {
-                console.error("ERRO CRÍTICO DENTRO DO startButton.onclick:", err);
+                console.error("Erro ao iniciar a gravação:", err);
                 statusDiv.textContent = `Erro: ${err.name}. Verifique o console.`;
             }
         };
 
-        // --- MUDANÇA CRÍTICA: A função agora é global ---
-        window.stopRecording = () => {
+        const stopRecording = () => {
             if (mediaRecorder) {
                 mediaRecorder.stop();
                 startButton.disabled = false;
                 stopButton.disabled = true;
             }
         };
+        
+        startButton.addEventListener('click', startRecording);
+        stopButton.addEventListener('click', stopRecording);
+
     });
 }
