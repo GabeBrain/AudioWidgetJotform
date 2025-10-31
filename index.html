@@ -79,7 +79,7 @@
     let mediaRecorder;
     let audioChunks = [];
 
-    function onJotformReady() {
+    window.onJotformReady = function () {
       JFCustomWidget.subscribe("ready", () => {
         const permissionButton = document.getElementById('permissionButton');
         const startButton = document.getElementById('startButton');
@@ -91,7 +91,7 @@
 
         console.log("Widget carregado. Supabase client pronto.");
       });
-    }
+    };
 
     async function handlePermission() {
       const button = document.getElementById('permissionButton');
