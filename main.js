@@ -7,6 +7,8 @@ function onJotformReady() {
     
     const { createClient } = supabase;
     const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    console.log("Supabase client criado:", supabaseClient);
+
 
     JFCustomWidget.subscribe("ready", function(){
         

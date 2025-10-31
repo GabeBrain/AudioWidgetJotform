@@ -6,15 +6,43 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://js.jotform.com/JFCustomWidget.min.js?onload=onJotformReady"></script>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background-color: #f8f9fa; }
-        .container { background: white; padding: 24px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: center; width: 300px; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f8f9fa;
+        }
+        .container {
+            background: white;
+            padding: 24px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            text-align: center;
+            width: 300px;
+        }
         h3 { margin-top: 0; color: #343a40; }
-        button { display: flex; align-items: center; justify-content: center; width: 100%; padding: 12px; font-size: 16px; font-weight: 600; cursor: pointer; border: none; border-radius: 6px; margin-top: 12px; transition: background-color 0.2s; }
+        button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            padding: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            border-radius: 6px;
+            margin-top: 12px;
+            transition: background-color 0.2s;
+        }
         button svg { margin-right: 8px; }
-        .btn-primary { background-color: #007bff; color: white; } /* Azul */
-        .btn-warning { background-color: #ffc107; color: #212529; } /* Amarelo */
-        .btn-success { background-color: #28a745; color: white; } /* Verde */
-        .btn-danger { background-color: #dc3545; color: white; }  /* Vermelho */
+        .btn-primary { background-color: #007bff; color: white; }
+        .btn-warning { background-color: #ffc107; color: #212529; }
+        .btn-success { background-color: #28a745; color: white; }
+        .btn-danger { background-color: #dc3545; color: white; }
         button:disabled { background-color: #ced4da; cursor: not-allowed; }
         .hidden { display: none; }
     </style>
@@ -22,104 +50,121 @@
 <body>
     <div class="container">
         <h3>Gravador de Auditoria</h3>
+
         <div id="permission-step">
-            <button id="permissionButton" class="btn-primary" onclick="requestPermission()">Verificar Permissão</button>
+            <button id="permissionButton" class="btn-primary">Verificar Permissão</button>
         </div>
+
         <div id="recording-step" class="hidden">
-            <button id="startButton" class="btn-success" onclick="startRecording()"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>Iniciar Gravação</button>
-            <button id="stopButton" class="btn-danger" disabled onclick="stopRecording()"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"></path></svg>Parar Gravação</button>
+            <button id="startButton" class="btn-success"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>Iniciar Gravação</button>
+            <button id="stopButton" class="btn-danger" disabled><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"></path></svg>Parar Gravação</button>
         </div>
+
         <p id="status-text" style="font-weight: bold; margin-top: 15px;">Clique no botão para começar</p>
     </div>
 
     <script>
-        // --- TODO O CÓDIGO AGORA ESTÁ DENTRO DE UM ÚNICO ARQUIVO ---
+        // Supabase config
+        const SUPABASE_URL = 'https://mcsiygkjmwhyvaqroddi.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jc2l5Z2tqbXdoeXZhcXJvZGRpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYxODMyNDUsImV4cCI6MjA3MTc1OTI0NX0.GDCe18wOgb9Sz0UDrINUXDKE3wEcOJuTlyRIlaU2pGs';
 
-        // Declaração de variáveis globais para acesso
+        const { createClient } = supabase;
+        const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
         let mediaRecorder;
         let audioChunks = [];
-        let supabaseClient;
 
-        // Função principal chamada pelo Jotform quando tudo estiver pronto
+
         function onJotformReady() {
-            JFCustomWidget.subscribe("ready", function(){
-                console.log("Jotform está pronto.");
-                // Inicializa o cliente Supabase
-                const SUPABASE_URL = 'SUA_URL_DO_PROJETO_SUPABASE_AQUI';
-                const SUPABASE_ANON_KEY = 'SUA_CHAVE_ANON_PUBLIC_AQUI';
-                const { createClient } = supabase;
-                supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            JFCustomWidget.subscribe("ready", function () {
+                const permissionButton = document.getElementById('permissionButton');
+                const startButton = document.getElementById('startButton');
+                const stopButton = document.getElementById('stopButton');
+                const statusText = document.getElementById('status-text');
+
+                permissionButton.addEventListener('click', requestPermission);
+                startButton.addEventListener('click', startRecording);
+                stopButton.addEventListener('click', stopRecording);
+
+                console.log("Widget pronto. Supabase OK:", supabaseClient);
             });
         }
 
-        // Função para atualizar o botão de permissão
-        function updatePermissionButton(text, className, disabled = false) {
-            const btn = document.getElementById('permissionButton');
-            btn.textContent = text;
-            btn.className = `btn-${className}`;
-            btn.disabled = disabled;
-        }
-
-        // Função chamada pelo ONCLICK do botão de permissão
         async function requestPermission() {
-            console.log("Clicado! Tentando verificar permissão...");
-            // PASSO 1: Feedback visual IMEDIATO
-            updatePermissionButton("Verificando... O pop-up deve aparecer", 'warning', true);
+            const permissionButton = document.getElementById('permissionButton');
+            const statusText = document.getElementById('status-text');
+
+            permissionButton.textContent = "Verificando... Aguarde";
+            permissionButton.className = "btn-warning";
+            permissionButton.disabled = true;
 
             try {
-                // PASSO 2: Tenta acessar o microfone
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                
-                // Se chegar aqui, a permissão foi concedida
-                console.log("Permissão concedida!");
-                document.getElementById('permission-step').classList.add('hidden');
-                document.getElementById('recording-step').classList.remove('hidden');
-                document.getElementById('status-text').textContent = 'Status: Pronto para gravar!';
 
-                // Para a trilha do microfone para não deixar o ícone de gravação ativo
                 stream.getTracks().forEach(track => track.stop());
 
+                document.getElementById('permission-step').classList.add('hidden');
+                document.getElementById('recording-step').classList.remove('hidden');
+                statusText.textContent = "Status: Pronto para gravar!";
             } catch (err) {
-                // Se chegar aqui, a permissão foi negada
+
                 console.error("Permissão negada:", err);
-                updatePermissionButton("Permissão Negada", 'danger', true);
-                document.getElementById('status-text').textContent = "Habilite o microfone nas configurações do seu navegador para continuar.";
+                permissionButton.textContent = "Permissão negada";
+                permissionButton.className = "btn-danger";
+                statusText.textContent = "Ative o microfone nas configurações do navegador.";
             }
         }
 
-        // Funções de gravação (permanecem as mesmas)
+        
         async function startRecording() {
             const statusText = document.getElementById('status-text');
+            const startButton = document.getElementById('startButton');
+            const stopButton = document.getElementById('stopButton');
+
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 mediaRecorder = new MediaRecorder(stream);
-                mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
-                mediaRecorder.onstop = async () => {
-                    statusText.textContent = 'Processando e fazendo upload...';
-                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-                    const fileName = `gravacao-${Date.now()}.webm`;
-                    const { data, error } = await supabaseClient.storage.from('audio-auditoria').upload(fileName, audioBlob);
-                    if (error) throw error;
-                    const { data: { publicUrl } } = supabaseClient.storage.from('audio-auditoria').getPublicUrl(fileName);
-                    statusText.textContent = 'Upload Concluído!';
-                    JFCustomWidget.sendSubmit({ valid: true, value: publicUrl });
-                    document.getElementById('startButton').disabled = false;
-                    document.getElementById('stopButton').disabled = true;
-                };
                 audioChunks = [];
+
+                mediaRecorder.ondataavailable = event => {
+                    if (event.data.size > 0) audioChunks.push(event.data);
+                };
+
+                mediaRecorder.onstop = async () => {
+                    statusText.textContent = "Processando e fazendo upload...";
+                    try {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                        const fileName = `gravacao-${Date.now()}.webm`;
+                        const { data, error } = await supabaseClient.storage.from('audio-auditoria').upload(fileName, audioBlob);
+
+                        if (error) throw error;
+
+                        const { data: { publicUrl } } = supabaseClient.storage.from('audio-auditoria').getPublicUrl(fileName);
+
+                        statusText.textContent = "Upload concluído!";
+                        JFCustomWidget.sendSubmit({ valid: true, value: publicUrl });
+                    } catch (uploadError) {
+                        console.error("Erro no upload:", uploadError);
+                        statusText.textContent = "Erro ao fazer upload do áudio.";
+                        JFCustomWidget.sendSubmit({ valid: false });
+                    }
+
+                    startButton.disabled = false;
+                    stopButton.disabled = true;
+                };
+
                 mediaRecorder.start();
-                statusText.textContent = 'Gravando... 🔴';
-                document.getElementById('startButton').disabled = true;
-                document.getElementById('stopButton').disabled = false;
+                statusText.textContent = "Gravando... 🔴";
+                startButton.disabled = true;
+                stopButton.disabled = false;
             } catch (err) {
+                console.error("Erro ao iniciar a gravação:", err);
                 statusText.textContent = `Erro: ${err.name}`;
             }
         }
 
         function stopRecording() {
-            if (mediaRecorder) {
-                mediaRecorder.stop();
-            }
+            if (mediaRecorder) mediaRecorder.stop();
         }
     </script>
 </body>
