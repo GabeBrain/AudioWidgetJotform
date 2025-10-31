@@ -1,171 +1,178 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-    <meta charset="UTF-8">
-    <title>Widget de Gravação de Áudio</title>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="https://js.jotform.com/JFCustomWidget.min.js?onload=onJotformReady"></script>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            margin: 0;
-            background-color: #f8f9fa;
-        }
-        .container {
-            background: white;
-            padding: 24px;
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-            text-align: center;
-            width: 300px;
-        }
-        h3 { margin-top: 0; color: #343a40; }
-        button {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 100%;
-            padding: 12px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            border: none;
-            border-radius: 6px;
-            margin-top: 12px;
-            transition: background-color 0.2s;
-        }
-        button svg { margin-right: 8px; }
-        .btn-primary { background-color: #007bff; color: white; }
-        .btn-warning { background-color: #ffc107; color: #212529; }
-        .btn-success { background-color: #28a745; color: white; }
-        .btn-danger { background-color: #dc3545; color: white; }
-        button:disabled { background-color: #ced4da; cursor: not-allowed; }
-        .hidden { display: none; }
-    </style>
+  <meta charset="UTF-8" />
+  <title>Widget de Gravação de Áudio</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://js.jotform.com/JFCustomWidget.min.js?onload=onJotformReady"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+      background-color: #f8f9fa;
+    }
+    .container {
+      background: white;
+      padding: 24px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      text-align: center;
+      width: 300px;
+    }
+    h3 { margin-top: 0; color: #343a40; }
+    button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      padding: 12px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      border-radius: 6px;
+      margin-top: 12px;
+      transition: background-color 0.2s;
+    }
+    button svg { margin-right: 8px; }
+    .btn-primary { background-color: #007bff; color: white; }
+    .btn-warning { background-color: #ffc107; color: #212529; }
+    .btn-success { background-color: #28a745; color: white; }
+    .btn-danger { background-color: #dc3545; color: white; }
+    button:disabled { background-color: #ced4da; cursor: not-allowed; }
+    .hidden { display: none; }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <h3>Gravador de Auditoria</h3>
+  <div class="container">
+    <h3>Gravador de Auditoria</h3>
 
-        <div id="permission-step">
-            <button id="permissionButton" class="btn-primary">Verificar Permissão</button>
-        </div>
-
-        <div id="recording-step" class="hidden">
-            <button id="startButton" class="btn-success"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>Iniciar Gravação</button>
-            <button id="stopButton" class="btn-danger" disabled><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"></path></svg>Parar Gravação</button>
-        </div>
-
-        <p id="status-text" style="font-weight: bold; margin-top: 15px;">Clique no botão para começar</p>
+    <div id="permission-step">
+      <button id="permissionButton" class="btn-primary">Verificar Permissão</button>
     </div>
 
-    <script>
-        // Supabase config
-        const SUPABASE_URL = 'https://mcsiygkjmwhyvaqroddi.supabase.co';
-        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jc2l5Z2tqbXdoeXZhcXJvZGRpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYxODMyNDUsImV4cCI6MjA3MTc1OTI0NX0.GDCe18wOgb9Sz0UDrINUXDKE3wEcOJuTlyRIlaU2pGs';
+    <div id="recording-step" class="hidden">
+      <button id="startButton" class="btn-success">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>
+        Iniciar Gravação
+      </button>
+      <button id="stopButton" class="btn-danger" disabled>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"></path></svg>
+        Parar Gravação
+      </button>
+    </div>
 
-        const { createClient } = supabase;
-        const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    <p id="status-text" style="font-weight: bold; margin-top: 15px;">Clique no botão para começar</p>
+  </div>
 
-        let mediaRecorder;
-        let audioChunks = [];
+  <script>
+    const SUPABASE_URL = 'https://mcsiygkjmwhyvaqroddi.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jc2l5Z2tqbXdoeXZhcXJvZGRpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYxODMyNDUsImV4cCI6MjA3MTc1OTI0NX0.GDCe18wOgb9Sz0UDrINUXDKE3wEcOJuTlyRIlaU2pGs';
 
+    const { createClient } = supabase;
+    const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-        function onJotformReady() {
-            JFCustomWidget.subscribe("ready", function () {
-                const permissionButton = document.getElementById('permissionButton');
-                const startButton = document.getElementById('startButton');
-                const stopButton = document.getElementById('stopButton');
-                const statusText = document.getElementById('status-text');
+    let mediaRecorder;
+    let audioChunks = [];
 
-                permissionButton.addEventListener('click', requestPermission);
-                startButton.addEventListener('click', startRecording);
-                stopButton.addEventListener('click', stopRecording);
+    function onJotformReady() {
+      JFCustomWidget.subscribe("ready", () => {
+        const permissionButton = document.getElementById('permissionButton');
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
 
-                console.log("Widget pronto. Supabase OK:", supabaseClient);
-            });
-        }
+        permissionButton.addEventListener('click', handlePermission);
+        startButton.addEventListener('click', startRecording);
+        stopButton.addEventListener('click', stopRecording);
 
-        async function requestPermission() {
-            const permissionButton = document.getElementById('permissionButton');
-            const statusText = document.getElementById('status-text');
+        console.log("Widget carregado. Supabase client pronto.");
+      });
+    }
 
-            permissionButton.textContent = "Verificando... Aguarde";
-            permissionButton.className = "btn-warning";
-            permissionButton.disabled = true;
+    async function handlePermission() {
+      const button = document.getElementById('permissionButton');
+      const status = document.getElementById('status-text');
 
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      button.textContent = "Verificando...";
+      button.className = "btn-warning";
+      button.disabled = true;
 
-                stream.getTracks().forEach(track => track.stop());
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(track => track.stop());
 
-                document.getElementById('permission-step').classList.add('hidden');
-                document.getElementById('recording-step').classList.remove('hidden');
-                statusText.textContent = "Status: Pronto para gravar!";
-            } catch (err) {
+        document.getElementById('permission-step').classList.add('hidden');
+        document.getElementById('recording-step').classList.remove('hidden');
+        status.textContent = "Status: Pronto para gravar!";
+      } catch (err) {
+        console.error("Erro ao obter permissão:", err);
+        button.textContent = "Permissão negada";
+        button.className = "btn-danger";
+        status.textContent = "Ative o microfone nas configurações do navegador.";
+      }
+    }
 
-                console.error("Permissão negada:", err);
-                permissionButton.textContent = "Permissão negada";
-                permissionButton.className = "btn-danger";
-                statusText.textContent = "Ative o microfone nas configurações do navegador.";
-            }
-        }
+    async function startRecording() {
+      const status = document.getElementById('status-text');
+      const startBtn = document.getElementById('startButton');
+      const stopBtn = document.getElementById('stopButton');
 
-        
-        async function startRecording() {
-            const statusText = document.getElementById('status-text');
-            const startButton = document.getElementById('startButton');
-            const stopButton = document.getElementById('stopButton');
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
 
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                mediaRecorder = new MediaRecorder(stream);
-                audioChunks = [];
+        mediaRecorder.ondataavailable = e => {
+          if (e.data.size > 0) audioChunks.push(e.data);
+        };
 
-                mediaRecorder.ondataavailable = event => {
-                    if (event.data.size > 0) audioChunks.push(event.data);
-                };
+        mediaRecorder.onstop = async () => {
+          status.textContent = "Processando e enviando...";
+          try {
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            const fileName = `gravacao-${Date.now()}.webm`;
+            const { error } = await supabaseClient
+              .storage.from('audio-auditoria')
+              .upload(fileName, audioBlob);
 
-                mediaRecorder.onstop = async () => {
-                    statusText.textContent = "Processando e fazendo upload...";
-                    try {
-                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-                        const fileName = `gravacao-${Date.now()}.webm`;
-                        const { data, error } = await supabaseClient.storage.from('audio-auditoria').upload(fileName, audioBlob);
+            if (error) throw error;
 
-                        if (error) throw error;
+            const { data: { publicUrl } } = supabaseClient
+              .storage.from('audio-auditoria')
+              .getPublicUrl(fileName);
 
-                        const { data: { publicUrl } } = supabaseClient.storage.from('audio-auditoria').getPublicUrl(fileName);
+            status.textContent = "Upload concluído!";
+            JFCustomWidget.sendSubmit({ valid: true, value: publicUrl });
+          } catch (err) {
+            console.error("Erro no upload:", err);
+            status.textContent = "Erro ao enviar áudio.";
+            JFCustomWidget.sendSubmit({ valid: false });
+          }
 
-                        statusText.textContent = "Upload concluído!";
-                        JFCustomWidget.sendSubmit({ valid: true, value: publicUrl });
-                    } catch (uploadError) {
-                        console.error("Erro no upload:", uploadError);
-                        statusText.textContent = "Erro ao fazer upload do áudio.";
-                        JFCustomWidget.sendSubmit({ valid: false });
-                    }
+          startBtn.disabled = false;
+          stopBtn.disabled = true;
+        };
 
-                    startButton.disabled = false;
-                    stopButton.disabled = true;
-                };
+        mediaRecorder.start();
+        status.textContent = "Gravando... 🔴";
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
 
-                mediaRecorder.start();
-                statusText.textContent = "Gravando... 🔴";
-                startButton.disabled = true;
-                stopButton.disabled = false;
-            } catch (err) {
-                console.error("Erro ao iniciar a gravação:", err);
-                statusText.textContent = `Erro: ${err.name}`;
-            }
-        }
+      } catch (err) {
+        console.error("Erro ao iniciar gravação:", err);
+        status.textContent = `Erro: ${err.name}`;
+      }
+    }
 
-        function stopRecording() {
-            if (mediaRecorder) mediaRecorder.stop();
-        }
-    </script>
+    function stopRecording() {
+      if (mediaRecorder && mediaRecorder.state !== "inactive") {
+        mediaRecorder.stop();
+      }
+    }
+  </script>
 </body>
 </html>
