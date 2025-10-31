@@ -4,7 +4,112 @@
   <meta charset="UTF-8" />
   <title>Widget de Gravação de Áudio</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <!-- 1. Declaração ANTES do script do Jotform -->
+  <script>
+    function handlePermission() {
+      const button = document.getElementById('permissionButton');
+      const status = document.getElementById('status-text');
+
+      button.textContent = "Verificando...";
+      button.className = "btn-warning";
+      button.disabled = true;
+
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+        stream.getTracks().forEach(track => track.stop());
+        document.getElementById('permission-step').classList.add('hidden');
+        document.getElementById('recording-step').classList.remove('hidden');
+        status.textContent = "Status: Pronto para gravar!";
+      }).catch(err => {
+        console.error("Erro ao obter permissão:", err);
+        button.textContent = "Permissão negada";
+        button.className = "btn-danger";
+        status.textContent = "Ative o microfone nas configurações do navegador.";
+      });
+    }
+
+    function stopRecording() {
+      if (mediaRecorder && mediaRecorder.state !== "inactive") {
+        mediaRecorder.stop();
+      }
+    }
+
+    async function startRecording() {
+      const status = document.getElementById('status-text');
+      const startBtn = document.getElementById('startButton');
+      const stopBtn = document.getElementById('stopButton');
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
+
+        mediaRecorder.ondataavailable = e => {
+          if (e.data.size > 0) audioChunks.push(e.data);
+        };
+
+        mediaRecorder.onstop = async () => {
+          status.textContent = "Processando e enviando...";
+          try {
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            const fileName = `gravacao-${Date.now()}.webm`;
+            const { error } = await supabaseClient
+              .storage.from('audio-auditoria')
+              .upload(fileName, audioBlob);
+
+            if (error) throw error;
+
+            const { data: { publicUrl } } = supabaseClient
+              .storage.from('audio-auditoria')
+              .getPublicUrl(fileName);
+
+            status.textContent = "Upload concluído!";
+            JFCustomWidget.sendSubmit({ valid: true, value: publicUrl });
+          } catch (err) {
+            console.error("Erro no upload:", err);
+            status.textContent = "Erro ao enviar áudio.";
+            JFCustomWidget.sendSubmit({ valid: false });
+          }
+
+          startBtn.disabled = false;
+          stopBtn.disabled = true;
+        };
+
+        mediaRecorder.start();
+        status.textContent = "Gravando... 🔴";
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+
+      } catch (err) {
+        console.error("Erro ao iniciar gravação:", err);
+        status.textContent = `Erro: ${err.name}`;
+      }
+    }
+
+    // 2. onJotformReady global
+    window.onJotformReady = function () {
+      if (!window.JFCustomWidget) return;
+
+      JFCustomWidget.subscribe("ready", () => {
+        document.getElementById('permissionButton').addEventListener('click', handlePermission);
+        document.getElementById('startButton').addEventListener('click', startRecording);
+        document.getElementById('stopButton').addEventListener('click', stopRecording);
+        console.log("Widget Jotform pronto.");
+      });
+    };
+
+    // 3. Fallback caso o onload falhe
+    const fallback = setInterval(() => {
+      if (window.JFCustomWidget?.subscribe) {
+        clearInterval(fallback);
+        window.onJotformReady();
+      }
+    }, 200);
+  </script>
+
+  <!-- 4. Script da Jotform DEPOIS da função -->
   <script src="https://js.jotform.com/JFCustomWidget.min.js?onload=onJotformReady"></script>
+
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -78,101 +183,6 @@
 
     let mediaRecorder;
     let audioChunks = [];
-
-    window.onJotformReady = function () {
-      JFCustomWidget.subscribe("ready", () => {
-        const permissionButton = document.getElementById('permissionButton');
-        const startButton = document.getElementById('startButton');
-        const stopButton = document.getElementById('stopButton');
-
-        permissionButton.addEventListener('click', handlePermission);
-        startButton.addEventListener('click', startRecording);
-        stopButton.addEventListener('click', stopRecording);
-
-        console.log("Widget carregado. Supabase client pronto.");
-      });
-    };
-
-    async function handlePermission() {
-      const button = document.getElementById('permissionButton');
-      const status = document.getElementById('status-text');
-
-      button.textContent = "Verificando...";
-      button.className = "btn-warning";
-      button.disabled = true;
-
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach(track => track.stop());
-
-        document.getElementById('permission-step').classList.add('hidden');
-        document.getElementById('recording-step').classList.remove('hidden');
-        status.textContent = "Status: Pronto para gravar!";
-      } catch (err) {
-        console.error("Erro ao obter permissão:", err);
-        button.textContent = "Permissão negada";
-        button.className = "btn-danger";
-        status.textContent = "Ative o microfone nas configurações do navegador.";
-      }
-    }
-
-    async function startRecording() {
-      const status = document.getElementById('status-text');
-      const startBtn = document.getElementById('startButton');
-      const stopBtn = document.getElementById('stopButton');
-
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream);
-        audioChunks = [];
-
-        mediaRecorder.ondataavailable = e => {
-          if (e.data.size > 0) audioChunks.push(e.data);
-        };
-
-        mediaRecorder.onstop = async () => {
-          status.textContent = "Processando e enviando...";
-          try {
-            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-            const fileName = `gravacao-${Date.now()}.webm`;
-            const { error } = await supabaseClient
-              .storage.from('audio-auditoria')
-              .upload(fileName, audioBlob);
-
-            if (error) throw error;
-
-            const { data: { publicUrl } } = supabaseClient
-              .storage.from('audio-auditoria')
-              .getPublicUrl(fileName);
-
-            status.textContent = "Upload concluído!";
-            JFCustomWidget.sendSubmit({ valid: true, value: publicUrl });
-          } catch (err) {
-            console.error("Erro no upload:", err);
-            status.textContent = "Erro ao enviar áudio.";
-            JFCustomWidget.sendSubmit({ valid: false });
-          }
-
-          startBtn.disabled = false;
-          stopBtn.disabled = true;
-        };
-
-        mediaRecorder.start();
-        status.textContent = "Gravando... 🔴";
-        startBtn.disabled = true;
-        stopBtn.disabled = false;
-
-      } catch (err) {
-        console.error("Erro ao iniciar gravação:", err);
-        status.textContent = `Erro: ${err.name}`;
-      }
-    }
-
-    function stopRecording() {
-      if (mediaRecorder && mediaRecorder.state !== "inactive") {
-        mediaRecorder.stop();
-      }
-    }
   </script>
 </body>
 </html>
