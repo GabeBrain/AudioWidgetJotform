@@ -14,6 +14,28 @@
     let widgetInitialized = false;
     let widgetSubscriptionsRegistered = false;
     let controlsInitialized = false;
+    let widgetAvailabilityLogged = false;
+    let widgetSendDataWrapped = false;
+
+    function monitorWidgetAvailability() {
+      const widget = window.JFCustomWidget;
+      if (!widget) return;
+
+      if (!widgetAvailabilityLogged) {
+        widgetAvailabilityLogged = true;
+        console.log("[WidgetAudio] JFCustomWidget available.");
+      }
+
+      if (!widgetSendDataWrapped && typeof widget.sendData === "function") {
+        const originalSendData = widget.sendData.bind(widget);
+        widget.sendData = (payload) => {
+          console.log("[WidgetAudio] sendData payload:", payload);
+          return originalSendData(payload);
+        };
+        widgetSendDataWrapped = true;
+        console.log("[WidgetAudio] sendData wrapper enabled.");
+      }
+    }
 
     function handlePermission() {
       const button = document.getElementById('permissionButton');
@@ -102,7 +124,7 @@
         };
 
         mediaRecorder.start();
-        latestAudioUrl = "";
+        
         isUploading = true;
         status.textContent = "Gravando...";
         startBtn.disabled = true;
@@ -116,6 +138,7 @@
 
     // 2. onJotformReady global
     window.onJotformReady = function () {
+      monitorWidgetAvailability();
       if (!window.JFCustomWidget || widgetSubscriptionsRegistered) return;
 
       widgetSubscriptionsRegistered = true;
@@ -126,14 +149,16 @@
 
         initializeControls();
 
+        const initialValue = value || "";
         if (value) {
           latestAudioUrl = value;
           const status = document.getElementById('status-text');
           status.textContent = "Audio existente pronto para envio.";
-          JFCustomWidget.sendData({ value: latestAudioUrl });
+        
         }
 
-        console.log("Widget Jotform pronto.");
+        JFCustomWidget.sendData({ value: initialValue });
+        console.log("Widget Jotform pronto. Valor inicial enviado:", initialValue);
       });
 
       JFCustomWidget.subscribe("submit", () => {
@@ -144,11 +169,12 @@
           status.textContent = isUploading
             ? "Aguarde o upload do audio."
             : "Grave um audio antes de enviar.";
+          return;
         }
 
         JFCustomWidget.sendSubmit({
-          valid: isValid,
-          value: isValid ? latestAudioUrl : ""
+          valid: true,
+          value: latestAudioUrl
         });
       });
     };
@@ -160,7 +186,9 @@
     }
 
     // 3. Fallback caso o onload falhe
+    monitorWidgetAvailability();
     const fallback = setInterval(() => {
+      monitorWidgetAvailability();
       if (window.JFCustomWidget?.subscribe) {
         clearInterval(fallback);
         window.onJotformReady();
