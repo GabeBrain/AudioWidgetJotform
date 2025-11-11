@@ -13,6 +13,7 @@
     let isUploading = false;
     let widgetInitialized = false;
     let widgetSubscriptionsRegistered = false;
+    let controlsInitialized = false;
 
     function handlePermission() {
       const button = document.getElementById('permissionButton');
@@ -33,6 +34,22 @@
         button.className = "btn-danger";
         status.textContent = "Ative o microfone nas configurações do navegador.";
       });
+    }
+
+    function initializeControls() {
+      if (controlsInitialized) return;
+
+      const permissionBtn = document.getElementById('permissionButton');
+      const startBtn = document.getElementById('startButton');
+      const stopBtn = document.getElementById('stopButton');
+
+      if (!permissionBtn || !startBtn || !stopBtn) return;
+
+      permissionBtn.addEventListener('click', handlePermission);
+      startBtn.addEventListener('click', startRecording);
+      stopBtn.addEventListener('click', stopRecording);
+
+      controlsInitialized = true;
     }
 
     function stopRecording() {
@@ -107,9 +124,7 @@
         if (widgetInitialized) return;
         widgetInitialized = true;
 
-        document.getElementById('permissionButton').addEventListener('click', handlePermission);
-        document.getElementById('startButton').addEventListener('click', startRecording);
-        document.getElementById('stopButton').addEventListener('click', stopRecording);
+        initializeControls();
 
         if (value) {
           latestAudioUrl = value;
@@ -137,6 +152,12 @@
         });
       });
     };
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", initializeControls);
+    } else {
+      initializeControls();
+    }
 
     // 3. Fallback caso o onload falhe
     const fallback = setInterval(() => {
