@@ -8,6 +8,7 @@
     label, input { display: block; width: 100%; }
     input { margin-top: .25rem; padding: .5rem; }
   </style>
+  <script src="https://js.jotform.com/JFCustomWidget.min.js"></script>
 </head>
 <body>
   <label>
@@ -19,7 +20,11 @@
     const input = document.getElementById('urlInput');
 
     function trySend(value) {
-      if (!window.JFCustomWidget) return;
+      if (!window.JFCustomWidget) {
+        console.log('[widget] sendData skipped: JFCustomWidget missing');
+        return;
+      }
+      console.log('[widget] sendData', value);
       window.JFCustomWidget.sendData({
         valid: !!value,
         value
