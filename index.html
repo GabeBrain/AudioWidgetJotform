@@ -17,6 +17,8 @@
   </label>
 
   <script>
+    console.log('[widget] script loaded');
+
     const input = document.getElementById('urlInput');
 
     function trySend(value) {
@@ -32,8 +34,16 @@
     }
 
     // Retry until JFCustomWidget exists
+    let waitCount = 0;
     const handshake = setInterval(() => {
-      if (!window.JFCustomWidget) return;
+      if (!window.JFCustomWidget) {
+        if (waitCount % 20 === 0) {
+          console.log('[widget] waiting for JFCustomWidget...', waitCount);
+        }
+        waitCount += 1;
+        return;
+      }
+      console.log('[widget] JFCustomWidget detected');
       clearInterval(handshake);
 
       // Tell Jotform we're ready and set current value
