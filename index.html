@@ -22,12 +22,6 @@
     let activeStream = null;
     let recordingFinalizationPromise = null;
     let submitInProgress = false;
-    let jotformBridgeRequested = false;
-    let jotformBridgeAttempts = 0;
-    let jotformBridgeLoaded = false;
-
-    const JF_CUSTOM_WIDGET_SRC = "https://js.jotform.com/JFCustomWidget.min.js";
-
     const widgetLogBuffer = [];
 
     function reportWidgetLog(level, message, data) {
@@ -105,56 +99,6 @@
       } catch (_) {}
       activeStream = null;
     }
-
-    function ensureJotformWidgetBridge(reason = "auto") {
-      if (window.JFCustomWidget) {
-        return;
-      }
-
-      if (jotformBridgeRequested) {
-        return;
-      }
-
-      jotformBridgeRequested = true;
-      jotformBridgeAttempts += 1;
-
-      const scriptId = "jf-custom-widget-loader";
-      const existing = document.getElementById(scriptId);
-      if (existing) {
-        logWidget("Script JFCustomWidget ja requisitado.");
-        return;
-      }
-
-      logWidget(`Carregando script JFCustomWidget (${reason}).`);
-
-      const script = document.createElement("script");
-      script.id = scriptId;
-      script.src = `${JF_CUSTOM_WIDGET_SRC}?attempt=${jotformBridgeAttempts}&ts=${Date.now()}`;
-      script.async = true;
-      script.onload = () => {
-        jotformBridgeRequested = false;
-        jotformBridgeLoaded = true;
-        logWidget("Script JFCustomWidget carregado com sucesso.");
-        monitorWidgetAvailability();
-        window.onJotformReady?.();
-      };
-      script.onerror = (event) => {
-        jotformBridgeRequested = false;
-        script.remove();
-        logWidgetError("Falha ao carregar o script JFCustomWidget.", {
-          attempts: jotformBridgeAttempts,
-          message: event?.message || "evento desconhecido"
-        });
-        setTimeout(() => {
-          if (!window.JFCustomWidget) {
-            ensureJotformWidgetBridge("retry");
-          }
-        }, 2000);
-      };
-
-      document.head.appendChild(script);
-    }
-
     function monitorWidgetAvailability() {
       const widget = window.JFCustomWidget;
       if (!widget) {
@@ -162,7 +106,6 @@
           widgetWaitingLogged = true;
           logWidget("Aguardando JFCustomWidget do Jotform...");
         }
-        ensureJotformWidgetBridge("monitor");
         return;
       }
 
@@ -187,8 +130,6 @@
     }
 
     logWidget("WidgetAudio script inicializado.");
-    ensureJotformWidgetBridge("boot");
-
     function handlePermission() {
       const button = document.getElementById('permissionButton');
       const status = document.getElementById('status-text');
@@ -483,5 +424,6 @@
     const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
   </script>
+  <script src="https://js.jotform.com/JFCustomWidget.min.js?onload=onJotformReady"></script>
 </body>
 </html>
