@@ -31,10 +31,19 @@
       if (!window.JFCustomWidget) return;
       clearInterval(handshake);
 
-      // Tell Jotform we’re ready and set current value
+      // Tell Jotform we're ready and set current value
       window.JFCustomWidget.subscribe('ready', function (msg) {
         input.value = msg?.value?.value || '';
         trySend(input.value);
+      });
+
+      // Acknowledge form submissions so the parent can continue
+      window.JFCustomWidget.subscribe('submit', function () {
+        const value = input.value.trim();
+        window.JFCustomWidget.sendSubmit({
+          valid: !!value,
+          value
+        });
       });
 
       // Push new value on change
