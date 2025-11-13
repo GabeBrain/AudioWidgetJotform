@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Widget de Gravacao de Audio</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    const SUPABASE_URL = 'https://mcsiygkjmwhyvaqroddi.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jc2l5Z2tqbXdoeXZhcXJvZGRpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYxODMyNDUsImV4cCI6MjA3MTc1OTI0NX0.GDCe18wOgb9Sz0UDrINUXDKE3wEcOJuTlyRIlaU2pGs';
+
+    const { createClient } = supabase;
+    window.supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  </script>
+
+  <!-- 1. Declaracao ANTES do script do Jotform -->
+  <script>
+    let mediaRecorder;
+    let audioChunks = [];
+    let latestAudioUrl = '';
+    let isUploading = false;
+    let widgetInitialized = false;
+    let widgetSubscriptionsRegistered = false;
+    let controlsInitialized = false;
+    let isRecording = false;
+    let activeStream = null;
+    let recordingFinalizationPromise = null;
+    let submitInProgress = false;
+    let pendingSendDataPayload = null;
+
+    const logInfo = (...args) => console.log('[WidgetAudio]', ...args);
+    const logError = (...args) => console.error('[WidgetAudio]', ...args);
+
+    logInfo('Script inicializado.');
+
+    function sendDataToParent(payload, context = 'unspecified') {
+      pendingSendDataPayload = payload;
+      if (window.JFCustomWidget?.sendData) {
+        logInfo(`sendData dispatch (${context})`, payload);
+        window.JFCustomWidget.sendData(payload);
+        pendingSendDataPayload = null;
+      } else {
+        logInfo(`sendData aguardando SDK (${context})`, payload);
+      }
+    }
+
+    function flushPendingSendData(context = 'flush') {
+      if (pendingSendDataPayload && window.JFCustomWidget?.sendData) {
+        logInfo(`flush sendData (${context})`, pendingSendDataPayload);
+        window.JFCustomWidget.sendData(pendingSendDataPayload);
+        pendingSendDataPayload = null;
+      }
+    }
+
+    function waitForRecordingFinalization() {
+      return recordingFinalizationPromise || Promise.resolve();
+    }
+
+    function releaseActiveStream() {
+      if (!activeStream) return;
+      try {
+        activeStream.getTracks().forEach(track => track.stop());
+      } catch (_) {}
+      activeStream = null;
+    }
+
+    function handlePermission() {
+      const button = document.getElementById('permissionButton');
+      const status = document.getElementById('status-text');
+
+      if (!button || !status) return;
+
+      logInfo('Solicitando permissao de microfone.');
+      button.textContent = 'Verificando...';
+      button.className = 'btn-warning';
+      button.disabled = true;
+
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+        logInfo('Permissao concedida.');
+        stream.getTracks().forEach(track => track.stop());
+        document.getElementById('permission-step').classList.add('hidden');
+        document.getElementById('recording-step').classList.remove('hidden');
+        status.textContent = 'Status: Pronto para gravar!';
+      }).catch(err => {
+        logError('Erro ao obter permissao.', err);
+        button.textContent = 'Permissao negada';
+        button.className = 'btn-danger';
+        button.disabled = false;
+        status.textContent = 'Ative o microfone nas configuracoes do navegador.';
+      });
+    }
+
+    function initializeControls() {
+      if (controlsInitialized) return;
+
+      const permissionBtn = document.getElementById('permissionButton');
+      const startBtn = document.getElementById('startButton');
+
+      if (!permissionBtn || !startBtn) return;
+
+      permissionBtn.addEventListener('click', handlePermission);
+      startBtn.addEventListener('click', startRecording);
+
+      controlsInitialized = true;
+      logInfo('Controles iniciais registrados.');
+    }
+
+    async function startRecording() {
+      const status = document.getElementById('status-text');
+      const startBtn = document.getElementById('startButton');
+
+      if (!startBtn || !status) return;
+
+      if (isRecording) {
+        status.textContent = 'Gravacao em andamento. Envie o formulario para finalizar.';
+        return;
+      }
+
+      if (isUploading) {
+        status.textContent = 'Aguarde o upload anterior finalizar.';
+        return;
+      }
+
+      try {
+        logInfo('Iniciando gravacao.');
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        activeStream = stream;
+        mediaRecorder = new MediaRecorder(stream);
+        logInfo('MediaRecorder iniciado.', mediaRecorder.mimeType);
+        audioChunks = [];
+        isRecording = true;
+        latestAudioUrl = '';
+        sendDataToParent({ value: '' }, 'recording-start');
+
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) audioChunks.push(e.data);
+        };
+
+        recordingFinalizationPromise = new Promise((resolve) => {
+          mediaRecorder.onstop = async () => {
+            logInfo('Finalizando gravacao; iniciando processamento.');
+            isRecording = false;
+            releaseActiveStream();
+            isUploading = true;
+            status.textContent = 'Processando e enviando...';
+
+            try {
+              const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+              const fileName = `gravacao-${Date.now()}.webm`;
+              logInfo('Enviando arquivo para Supabase.', fileName);
+              const { data: uploadData, error } = await window.supabaseClient
+                .storage.from('audio-auditoria')
+                .upload(fileName, audioBlob, { contentType: 'audio/webm' });
+
+              if (error) throw error;
+
+              logInfo('Upload concluido.', uploadData?.path);
+
+              const { data: { publicUrl } } = window.supabaseClient
+                .storage.from('audio-auditoria')
+                .getPublicUrl(fileName);
+
+              latestAudioUrl = publicUrl;
+              logInfo('URL publica gerada.', publicUrl);
+              status.textContent = 'Audio pronto para envio.';
+              sendDataToParent({ value: latestAudioUrl }, 'upload-complete');
+              flushPendingSendData('upload-complete');
+            } catch (err) {
+              logError('Erro no upload do audio.', err);
+              status.textContent = 'Erro ao enviar audio.';
+              latestAudioUrl = '';
+            } finally {
+              isUploading = false;
+              startBtn.disabled = false;
+              recordingFinalizationPromise = null;
+              resolve();
+            }
+          };
+        });
+
+        mediaRecorder.start();
+        status.textContent = 'Gravando... finalize ao enviar o formulario.';
+        startBtn.disabled = true;
+      } catch (err) {
+        logError('Erro ao iniciar gravacao.', err);
+        status.textContent = `Erro: ${err.name}`;
+        releaseActiveStream();
+        isRecording = false;
+        isUploading = false;
+        recordingFinalizationPromise = null;
+      }
+    }
+
+    function stopActiveRecording(reason = 'manual') {
+      if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+        return waitForRecordingFinalization();
+      }
+
+      logInfo('Solicitando parada da gravacao.', reason);
+
+      try {
+        mediaRecorder.stop();
+      } catch (err) {
+        logError('Falha ao parar a gravacao.', err);
+      }
+
+      return waitForRecordingFinalization();
+    }
+
+    async function handleWidgetSubmit() {
+      const status = document.getElementById('status-text');
+
+      if (submitInProgress) {
+        return;
+      }
+
+      submitInProgress = true;
+      logInfo('Submit acionado pelo Jotform.');
+
+      try {
+        if (isRecording) {
+          if (status) status.textContent = 'Finalizando a gravacao antes do envio...';
+          await stopActiveRecording('submit');
+        } else if (isUploading) {
+          if (status) status.textContent = 'Aguardando o audio ficar pronto...';
+          await waitForRecordingFinalization();
+        }
+
+        if (!latestAudioUrl) {
+          logInfo('Nenhum audio disponivel no submit.');
+          if (status) status.textContent = 'Grave um audio antes de enviar.';
+          JFCustomWidget.sendSubmit({
+            valid: false,
+            value: ''
+          });
+          return;
+        }
+
+        sendDataToParent({ value: latestAudioUrl }, 'submit-final');
+        flushPendingSendData('submit-final');
+        logInfo('URL enviada ao Jotform.', latestAudioUrl);
+        JFCustomWidget.sendSubmit({
+          valid: true,
+          value: latestAudioUrl
+        });
+      } catch (err) {
+        logError('Falha ao finalizar audio antes do envio.', err);
+        if (status) status.textContent = 'Erro ao finalizar audio. Tente novamente.';
+        JFCustomWidget.sendSubmit({
+          valid: false,
+          value: latestAudioUrl || ''
+        });
+      } finally {
+        submitInProgress = false;
+      }
+    }
+
+    // 2. onJotformReady global
+    window.onJotformReady = function () {
+      logInfo('onJotformReady chamado.');
+      if (!window.JFCustomWidget || widgetSubscriptionsRegistered) return;
+
+      widgetSubscriptionsRegistered = true;
+      logInfo('Registrando eventos do Jotform.');
+
+      JFCustomWidget.subscribe('ready', ({ value } = {}) => {
+        logInfo('Evento ready recebido.', value);
+        if (widgetInitialized) return;
+        widgetInitialized = true;
+
+        initializeControls();
+
+        const initialValue = value || '';
+        if (value) {
+          latestAudioUrl = value;
+          const status = document.getElementById('status-text');
+          if (status) status.textContent = 'Audio existente pronto para envio.';
+        }
+
+        sendDataToParent({ value: initialValue }, 'ready');
+        flushPendingSendData('ready');
+      });
+
+      JFCustomWidget.subscribe('submit', () => {
+        logInfo('Evento submit recebido.');
+        handleWidgetSubmit().catch(err => {
+          logError('Submit handler rejeitado.', err);
+        });
+      });
+
+      flushPendingSendData('onJotformReady');
+    };
+
+    if (window.JFCustomWidget) {
+      logInfo('JFCustomWidget detectado imediatamente.');
+      window.onJotformReady();
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => {
+        logInfo('DOMContentLoaded disparado.');
+        initializeControls();
+      });
+    } else {
+      logInfo('DOM pronto. Inicializando controles.');
+      initializeControls();
+    }
+
+    const widgetSdkPoll = setInterval(() => {
+      if (window.JFCustomWidget?.sendData) {
+        logInfo('JFCustomWidget detectado via poll.');
+        flushPendingSendData('poll');
+        clearInterval(widgetSdkPoll);
+        if (!widgetSubscriptionsRegistered) {
+          window.onJotformReady();
+        }
+      }
+    }, 250);
+  </script>
+
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+      background-color: #f8f9fa;
+    }
+    .container {
+      background: white;
+      padding: 24px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      text-align: center;
+      width: 300px;
+    }
+    h3 { margin-top: 0; color: #343a40; }
+    button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      padding: 12px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      border-radius: 6px;
+      margin-top: 12px;
+      transition: background-color 0.2s;
+    }
+    button svg { margin-right: 8px; }
+    .btn-primary { background-color: #007bff; color: white; }
+    .btn-warning { background-color: #ffc107; color: #212529; }
+    .btn-success { background-color: #28a745; color: white; }
+    .btn-danger { background-color: #dc3545; color: white; }
+    button:disabled { background-color: #ced4da; cursor: not-allowed; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h3>Gravador de Auditoria</h3>
+
+    <div id="permission-step">
+      <button id="permissionButton" class="btn-primary">Verificar Permissao</button>
+    </div>
+
+    <div id="recording-step" class="hidden">
+      <button id="startButton" class="btn-success">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>
+        Iniciar Gravacao
+      </button>
+    </div>
+
+    <p id="status-text" style="font-weight: bold; margin-top: 15px;">Clique no botao para comecar</p>
+  </div>
+
+  <script src="https://js.jotform.com/JotFormCustomWidget.min.js?onload=onJotformReady"></script>
+</body>
+</html>
