@@ -16,26 +16,122 @@
     let controlsInitialized = false;
     let widgetAvailabilityLogged = false;
     let widgetSendDataWrapped = false;
+    let widgetWaitingLogged = false;
+    let pendingSendDataPayload = null;
+    let isRecording = false;
+    let activeStream = null;
+    let recordingFinalizationPromise = null;
+    let submitInProgress = false;
+
+    const widgetLogBuffer = [];
+
+    function reportWidgetLog(level, message, data) {
+      const entry = {
+        time: new Date().toISOString(),
+        level,
+        message,
+        data
+      };
+      widgetLogBuffer.push(entry);
+      if (widgetLogBuffer.length > 50) widgetLogBuffer.shift();
+      try {
+        window.WidgetAudioDebug = { logs: widgetLogBuffer.slice() };
+      } catch (_) {}
+
+      const logArgs = ["[WidgetAudio]", message];
+      if (data !== undefined) logArgs.push(data);
+
+      try {
+        const method = level === "error" ? "error" : "log";
+        console[method](...logArgs);
+      } catch (_) {}
+
+      try {
+        if (window.parent && window.parent !== window) {
+          window.parent.console?.log?.(...logArgs);
+        }
+      } catch (_) {}
+
+      try {
+        if (window.top && window.top !== window) {
+          window.top.console?.log?.(...logArgs);
+        }
+      } catch (_) {}
+    }
+
+    function logWidget(message, data) {
+      reportWidgetLog("log", message, data);
+    }
+
+    function logWidgetError(message, data) {
+      reportWidgetLog("error", message, data);
+    }
+
+    function sendDataToParent(payload, context = "unspecified") {
+      pendingSendDataPayload = payload;
+      const widget = window.JFCustomWidget;
+      if (widget?.sendData) {
+        logWidget(`sendData dispatch (${context})`, payload);
+        widget.sendData(payload);
+        pendingSendDataPayload = null;
+      } else {
+        logWidget(`sendData queued (${context})`, payload);
+      }
+    }
+
+    function flushPendingSendData(context = "flush") {
+      if (!pendingSendDataPayload) return;
+      const widget = window.JFCustomWidget;
+      if (!widget?.sendData) return;
+      const payload = pendingSendDataPayload;
+      pendingSendDataPayload = null;
+      logWidget(`Flushing queued sendData (${context})`, payload);
+      widget.sendData(payload);
+    }
+
+    function waitForRecordingFinalization() {
+      return recordingFinalizationPromise || Promise.resolve();
+    }
+
+    function releaseActiveStream() {
+      if (!activeStream) return;
+      try {
+        activeStream.getTracks().forEach(track => track.stop());
+      } catch (_) {}
+      activeStream = null;
+    }
 
     function monitorWidgetAvailability() {
       const widget = window.JFCustomWidget;
-      if (!widget) return;
+      if (!widget) {
+        if (!widgetWaitingLogged) {
+          widgetWaitingLogged = true;
+          logWidget("Aguardando JFCustomWidget do Jotform...");
+        }
+        return;
+      }
+
+      widgetWaitingLogged = false;
 
       if (!widgetAvailabilityLogged) {
         widgetAvailabilityLogged = true;
-        console.log("[WidgetAudio] JFCustomWidget available.");
+        logWidget("JFCustomWidget disponivel.");
       }
 
       if (!widgetSendDataWrapped && typeof widget.sendData === "function") {
         const originalSendData = widget.sendData.bind(widget);
         widget.sendData = (payload) => {
-          console.log("[WidgetAudio] sendData payload:", payload);
+          logWidget("sendData payload enviado ao Jotform.", payload);
           return originalSendData(payload);
         };
         widgetSendDataWrapped = true;
-        console.log("[WidgetAudio] sendData wrapper enabled.");
+        logWidget("sendData wrapper habilitado.");
       }
+
+      flushPendingSendData("monitor");
     }
+
+    logWidget("WidgetAudio script inicializado.");
 
     function handlePermission() {
       const button = document.getElementById('permissionButton');
@@ -63,79 +159,152 @@
 
       const permissionBtn = document.getElementById('permissionButton');
       const startBtn = document.getElementById('startButton');
-      const stopBtn = document.getElementById('stopButton');
 
-      if (!permissionBtn || !startBtn || !stopBtn) return;
+      if (!permissionBtn || !startBtn) return;
 
       permissionBtn.addEventListener('click', handlePermission);
       startBtn.addEventListener('click', startRecording);
-      stopBtn.addEventListener('click', stopRecording);
 
       controlsInitialized = true;
-    }
-
-    function stopRecording() {
-      if (mediaRecorder && mediaRecorder.state !== "inactive") {
-        mediaRecorder.stop();
-      }
     }
 
     async function startRecording() {
       const status = document.getElementById('status-text');
       const startBtn = document.getElementById('startButton');
-      const stopBtn = document.getElementById('stopButton');
+
+      if (!startBtn || !status) return;
+
+      if (isRecording) {
+        status.textContent = "Gravacao em andamento. Envie o formulario para finalizar.";
+        return;
+      }
+
+      if (isUploading) {
+        status.textContent = "Aguarde o upload anterior finalizar.";
+        return;
+      }
 
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        activeStream = stream;
         mediaRecorder = new MediaRecorder(stream);
         audioChunks = [];
+        isRecording = true;
+        latestAudioUrl = "";
+        sendDataToParent({ value: "" }, "recording-start");
 
-        mediaRecorder.ondataavailable = e => {
+        mediaRecorder.ondataavailable = (e) => {
           if (e.data.size > 0) audioChunks.push(e.data);
         };
 
-        mediaRecorder.onstop = async () => {
-          status.textContent = "Processando e enviando...";
-          try {
-            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-            const fileName = `gravacao-${Date.now()}.webm`;
-            const { error } = await supabaseClient
-              .storage.from('audio-auditoria')
-              .upload(fileName, audioBlob);
+        recordingFinalizationPromise = new Promise((resolve) => {
+          mediaRecorder.onstop = async () => {
+            isRecording = false;
+            releaseActiveStream();
+            isUploading = true;
+            status.textContent = "Processando e enviando...";
 
-            if (error) throw error;
+            try {
+              const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+              const fileName = `gravacao-${Date.now()}.webm`;
+              const { error } = await supabaseClient
+                .storage.from('audio-auditoria')
+                .upload(fileName, audioBlob);
 
-            const { data: { publicUrl } } = supabaseClient
-              .storage.from('audio-auditoria')
-              .getPublicUrl(fileName);
+              if (error) throw error;
 
-            latestAudioUrl = publicUrl;
-            status.textContent = "Upload concluido! Audio pronto para envio.";
-            window.JFCustomWidget?.sendData({ value: latestAudioUrl });
-          } catch (err) {
-            console.error("Erro no upload:", err);
-            status.textContent = "Erro ao enviar audio.";
-            latestAudioUrl = "";
-          }
+              const { data: { publicUrl } } = supabaseClient
+                .storage.from('audio-auditoria')
+                .getPublicUrl(fileName);
 
-          startBtn.disabled = false;
-          stopBtn.disabled = true;
-          isUploading = false;
-        };
+              latestAudioUrl = publicUrl;
+              status.textContent = "Audio pronto para envio.";
+              sendDataToParent({ value: latestAudioUrl }, "upload-complete");
+            } catch (err) {
+              logWidgetError("Erro no upload do audio.", err);
+              status.textContent = "Erro ao enviar audio.";
+              latestAudioUrl = "";
+            } finally {
+              isUploading = false;
+              startBtn.disabled = false;
+              recordingFinalizationPromise = null;
+              resolve();
+            }
+          };
+        });
 
         mediaRecorder.start();
-        
-        isUploading = true;
-        status.textContent = "Gravando...";
+        status.textContent = "Gravando... finalize ao enviar o formulario.";
         startBtn.disabled = true;
-        stopBtn.disabled = false;
-
       } catch (err) {
-        console.error("Erro ao iniciar gravação:", err);
+        logWidgetError("Erro ao iniciar gravacao.", err);
         status.textContent = `Erro: ${err.name}`;
+        releaseActiveStream();
+        isRecording = false;
+        isUploading = false;
+        recordingFinalizationPromise = null;
       }
     }
 
+    function stopActiveRecording(reason = "manual") {
+      if (!mediaRecorder || mediaRecorder.state === "inactive") {
+        return waitForRecordingFinalization();
+      }
+
+      logWidget(`Parando gravacao (${reason}).`);
+
+      try {
+        mediaRecorder.stop();
+      } catch (err) {
+        logWidgetError("Falha ao parar a gravacao.", err);
+      }
+
+      return waitForRecordingFinalization();
+    }
+
+    async function handleWidgetSubmit() {
+      const status = document.getElementById('status-text');
+
+      if (submitInProgress) {
+        return;
+      }
+
+      submitInProgress = true;
+
+      try {
+        if (isRecording) {
+          if (status) status.textContent = "Finalizando a gravacao antes do envio...";
+          await stopActiveRecording("submit");
+        } else if (isUploading) {
+          if (status) status.textContent = "Aguardando o audio ficar pronto...";
+          await waitForRecordingFinalization();
+        }
+
+        if (!latestAudioUrl) {
+          if (status) status.textContent = "Grave um audio antes de enviar.";
+          JFCustomWidget.sendSubmit({
+            valid: false,
+            value: latestAudioUrl || ""
+          });
+          return;
+        }
+
+        sendDataToParent({ value: latestAudioUrl }, "submit-final");
+        JFCustomWidget.sendSubmit({
+          valid: true,
+          value: latestAudioUrl
+        });
+      } catch (err) {
+        logWidgetError("Falha ao finalizar audio antes do envio.", err);
+        if (status) status.textContent = "Erro ao finalizar audio. Tente novamente.";
+        JFCustomWidget.sendSubmit({
+          valid: false,
+          value: latestAudioUrl || ""
+        });
+      } finally {
+        submitInProgress = false;
+      }
+    }
     // 2. onJotformReady global
     window.onJotformReady = function () {
       monitorWidgetAvailability();
@@ -157,24 +326,13 @@
         
         }
 
-        JFCustomWidget.sendData({ value: initialValue });
-        console.log("Widget Jotform pronto. Valor inicial enviado:", initialValue);
+        sendDataToParent({ value: initialValue }, "ready");
+        logWidget("Widget Jotform pronto. Valor inicial enviado.", initialValue);
       });
 
       JFCustomWidget.subscribe("submit", () => {
-        const isValid = Boolean(latestAudioUrl) && !isUploading;
-
-        if (!isValid) {
-          const status = document.getElementById('status-text');
-          status.textContent = isUploading
-            ? "Aguarde o upload do audio."
-            : "Grave um audio antes de enviar.";
-          return;
-        }
-
-        JFCustomWidget.sendSubmit({
-          valid: true,
-          value: latestAudioUrl
+        handleWidgetSubmit().catch(err => {
+          logWidgetError("Submit handler rejeitado.", err);
         });
       });
     };
@@ -253,10 +411,6 @@
       <button id="startButton" class="btn-success">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>
         Iniciar Gravação
-      </button>
-      <button id="stopButton" class="btn-danger" disabled>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"></path></svg>
-        Parar Gravação
       </button>
     </div>
 
