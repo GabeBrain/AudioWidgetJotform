@@ -3,13 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <title>Widget de Gravacao de Audio</title>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
-    const SUPABASE_URL = 'https://mcsiygkjmwhyvaqroddi.supabase.co';
-    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1jc2l5Z2tqbXdoeXZhcXJvZGRpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYxODMyNDUsImV4cCI6MjA3MTc1OTI0NX0.GDCe18wOgb9Sz0UDrINUXDKE3wEcOJuTlyRIlaU2pGs';
-
-    const { createClient } = supabase;
-    window.supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    // Endpoint seguro que gera URL assinada de upload no Supabase
+    // Exemplo esperado de resposta: { uploadUrl, publicUrl }
+    const SIGNED_UPLOAD_ENDPOINT = 'https://qrnpgskrapnfpksucdvq.supabase.co/functions/v1/audio-upload-url';
   </script>
 
   <!-- 1. Declaracao ANTES do script do Jotform -->
@@ -53,6 +50,24 @@
 
     function waitForRecordingFinalization() {
       return recordingFinalizationPromise || Promise.resolve();
+    }
+
+    async function requestSignedUpload({ fileName, contentType }) {
+      if (!SIGNED_UPLOAD_ENDPOINT) {
+        throw new Error('SIGNED_UPLOAD_ENDPOINT nao configurado.');
+      }
+
+      const response = await fetch(SIGNED_UPLOAD_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileName, contentType })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Falha ao obter URL assinada (${response.status}).`);
+      }
+
+      return response.json();
     }
 
     function releaseActiveStream() {
@@ -146,18 +161,22 @@
             try {
               const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
               const fileName = `gravacao-${Date.now()}.webm`;
-              logInfo('Enviando arquivo para Supabase.', fileName);
-              const { data: uploadData, error } = await window.supabaseClient
-                .storage.from('audio-auditoria')
-                .upload(fileName, audioBlob, { contentType: 'audio/webm' });
+              logInfo('Solicitando URL assinada para upload.', fileName);
+              const { uploadUrl, publicUrl } = await requestSignedUpload({
+                fileName,
+                contentType: 'audio/webm'
+              });
 
-              if (error) throw error;
+              logInfo('Enviando arquivo para Supabase via URL assinada.');
+              const uploadResponse = await fetch(uploadUrl, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'audio/webm' },
+                body: audioBlob
+              });
 
-              logInfo('Upload concluido.', uploadData?.path);
-
-              const { data: { publicUrl } } = window.supabaseClient
-                .storage.from('audio-auditoria')
-                .getPublicUrl(fileName);
+              if (!uploadResponse.ok) {
+                throw new Error(`Upload falhou (${uploadResponse.status}).`);
+              }
 
               latestAudioUrl = publicUrl;
               logInfo('URL publica gerada.', publicUrl);
