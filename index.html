@@ -29,6 +29,20 @@
 
     logInfo('Script inicializado.');
 
+    function enableJotformDiagnostics() {
+      window.addEventListener('message', (event) => {
+        if (event?.data) {
+          logInfo('postMessage recebido do parent.', event.data);
+        }
+      });
+
+      if (window.JFCustomWidget) {
+        try {
+          logInfo('JFCustomWidget keys:', Object.keys(window.JFCustomWidget));
+        } catch (_) {}
+      }
+    }
+
     function sendDataToParent(payload, context = 'unspecified') {
       pendingSendDataPayload = payload;
       if (window.JFCustomWidget?.sendData) {
@@ -317,10 +331,12 @@
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', () => {
         logInfo('DOMContentLoaded disparado.');
+        enableJotformDiagnostics();
         initializeControls();
       });
     } else {
       logInfo('DOM pronto. Inicializando controles.');
+      enableJotformDiagnostics();
       initializeControls();
     }
 
