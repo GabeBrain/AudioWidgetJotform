@@ -23,6 +23,18 @@
     let recordingFinalizationPromise = null;
     let submitInProgress = false;
     let pendingSendDataPayload = null;
+    let recordedMimeType = 'audio/webm';
+    let recordedFileExtension = 'webm';
+
+    const RECORDER_TARGET_BITRATE = 96000;
+    const RECORDER_TIMESLICE_MS = 1000;
+    const MOBILE_AUDIO_CONSTRAINTS = {
+      channelCount: { ideal: 1 },
+      sampleRate: { ideal: 48000 },
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false
+    };
 
     const logInfo = (...args) => console.log('[WidgetAudio]', ...args);
     const logError = (...args) => console.error('[WidgetAudio]', ...args);
@@ -66,6 +78,45 @@
       return recordingFinalizationPromise || Promise.resolve();
     }
 
+    function getBaseMimeType(mimeType) {
+      const raw = (mimeType || '').trim().toLowerCase();
+      if (!raw) return 'audio/webm';
+      return raw.split(';')[0] || 'audio/webm';
+    }
+
+    function getFileExtensionFromMimeType(mimeType) {
+      const normalized = getBaseMimeType(mimeType);
+      if (normalized === 'audio/webm') return 'webm';
+      if (normalized === 'audio/mp4') return 'mp4';
+      if (normalized === 'audio/ogg') return 'ogg';
+      return 'webm';
+    }
+
+    function getBestSupportedRecorderMimeType() {
+      if (!window.MediaRecorder?.isTypeSupported) return '';
+      const candidates = [
+        'audio/webm;codecs=opus',
+        'audio/mp4',
+        'audio/webm',
+        'audio/ogg;codecs=opus'
+      ];
+      for (const candidate of candidates) {
+        if (window.MediaRecorder.isTypeSupported(candidate)) {
+          return candidate;
+        }
+      }
+      return '';
+    }
+
+    async function getAudioStreamForRecording() {
+      try {
+        return await navigator.mediaDevices.getUserMedia({ audio: MOBILE_AUDIO_CONSTRAINTS });
+      } catch (err) {
+        logError('Falha com constraints avancadas; usando fallback padrao.', err);
+        return navigator.mediaDevices.getUserMedia({ audio: true });
+      }
+    }
+
     async function requestSignedUpload({ fileName, contentType }) {
       if (!SIGNED_UPLOAD_ENDPOINT) {
         throw new Error('SIGNED_UPLOAD_ENDPOINT nao configurado.');
@@ -103,7 +154,7 @@
       button.className = 'btn-warning';
       button.disabled = true;
 
-      navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+      getAudioStreamForRecording().then(stream => {
         logInfo('Permissao concedida.');
         stream.getTracks().forEach(track => track.stop());
         document.getElementById('permission-step').classList.add('hidden');
@@ -149,12 +200,31 @@
         return;
       }
 
+      if (!window.MediaRecorder) {
+        status.textContent = 'Gravacao nao suportada neste navegador.';
+        return;
+      }
+
       try {
         logInfo('Iniciando gravacao.');
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const stream = await getAudioStreamForRecording();
         activeStream = stream;
-        mediaRecorder = new MediaRecorder(stream);
-        logInfo('MediaRecorder iniciado.', mediaRecorder.mimeType);
+        const preferredMimeType = getBestSupportedRecorderMimeType();
+        const recorderOptions = {
+          audioBitsPerSecond: RECORDER_TARGET_BITRATE
+        };
+        if (preferredMimeType) {
+          recorderOptions.mimeType = preferredMimeType;
+        }
+        mediaRecorder = new MediaRecorder(stream, recorderOptions);
+        recordedMimeType = getBaseMimeType(mediaRecorder.mimeType || preferredMimeType || 'audio/webm');
+        recordedFileExtension = getFileExtensionFromMimeType(recordedMimeType);
+        logInfo('MediaRecorder iniciado.', {
+          mimeType: mediaRecorder.mimeType,
+          uploadMimeType: recordedMimeType,
+          extension: recordedFileExtension,
+          bitrate: RECORDER_TARGET_BITRATE
+        });
         audioChunks = [];
         isRecording = true;
         latestAudioUrl = '';
@@ -173,18 +243,18 @@
             status.textContent = 'Processando e enviando...';
 
             try {
-              const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-              const fileName = `gravacao-${Date.now()}.webm`;
+              const audioBlob = new Blob(audioChunks, { type: recordedMimeType });
+              const fileName = `gravacao-${Date.now()}.${recordedFileExtension}`;
               logInfo('Solicitando URL assinada para upload.', fileName);
               const { uploadUrl, publicUrl } = await requestSignedUpload({
                 fileName,
-                contentType: 'audio/webm'
+                contentType: recordedMimeType
               });
 
               logInfo('Enviando arquivo para Supabase via URL assinada.');
               const uploadResponse = await fetch(uploadUrl, {
                 method: 'PUT',
-                headers: { 'Content-Type': 'audio/webm' },
+                headers: { 'Content-Type': recordedMimeType },
                 body: audioBlob
               });
 
@@ -210,7 +280,7 @@
           };
         });
 
-        mediaRecorder.start();
+        mediaRecorder.start(RECORDER_TIMESLICE_MS);
         status.textContent = 'Gravando... finalize ao enviar o formulario.';
         startBtn.disabled = true;
       } catch (err) {
