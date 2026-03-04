@@ -40,5 +40,5 @@ Edge Function para gerar URL assinada de upload no Supabase Storage, com suporte
 
 ### Observacoes
 
-- O widget atual continua enviando apenas URL para o Jotform (`WIDGET_VALUE_FORMAT = 'url'`), mas ja manda metadata para esta funcao.
-- Se quiser evoluir depois para JSON no campo do Jotform, troque `WIDGET_VALUE_FORMAT` para `json` no frontend.
+- O widget agora envia JSON no campo do Jotform (`WIDGET_VALUE_FORMAT = 'json'`) com `audioUrl`, `durationMs`, `sizeBytes`, etc.
+- A funcao aceita metadata opcional e o frontend faz fallback automatico sem metadata se o endpoint antigo recusar.
