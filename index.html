@@ -27,6 +27,7 @@
     let recordedFileExtension = 'webm';
     let locationPermissionState = 'pending';
     let microphonePermissionState = 'pending';
+    let hasRecordingStarted = false;
 
     const RECORDER_TARGET_BITRATE = 96000;
     const RECORDER_TIMESLICE_MS = 1000;
@@ -408,6 +409,7 @@
         });
         audioChunks = [];
         isRecording = true;
+        hasRecordingStarted = true;
         latestAudioUrl = '';
         sendDataToParent({ value: '' }, 'recording-start');
 
@@ -501,6 +503,16 @@
       logInfo('Submit acionado pelo Jotform.');
 
       try {
+        if (!hasRecordingStarted && !latestAudioUrl) {
+          logInfo('Submit bloqueado: gravacao ainda nao iniciada.');
+          if (status) setStatus('Inicie a gravacao para continuar.', 'error');
+          JFCustomWidget.sendSubmit({
+            valid: false,
+            value: ''
+          });
+          return;
+        }
+
         if (isRecording) {
           if (status) setStatus('Finalizando a gravacao antes do envio...', 'processing');
           await stopActiveRecording('submit');
@@ -555,6 +567,7 @@
 
         const initialValue = value || '';
         if (value) {
+          hasRecordingStarted = true;
           latestAudioUrl = value;
           const status = document.getElementById('status-text');
           if (status) setStatus('Audio existente pronto para envio.', 'success');
@@ -615,7 +628,7 @@
       --primary: #0f766e;
       --primary-strong: #115e59;
       --processing: #1d4ed8;
-      --success: #166534;
+      --success: #14532d;
       --error: #b91c1c;
       --recording: #b45309;
     }
