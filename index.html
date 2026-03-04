@@ -28,9 +28,13 @@
     let locationPermissionState = 'pending';
     let microphonePermissionState = 'pending';
     let hasRecordingStarted = false;
+    let recordingStartedAtMs = 0;
+    let latestAudioPayload = null;
 
     const RECORDER_TARGET_BITRATE = 96000;
     const RECORDER_TIMESLICE_MS = 1000;
+    const PAYLOAD_VERSION = 2;
+    const WIDGET_VALUE_FORMAT = 'url';
     const MOBILE_AUDIO_CONSTRAINTS = {
       channelCount: { ideal: 1 },
       sampleRate: { ideal: 48000 },
@@ -55,6 +59,66 @@
       if (statusCard) {
         statusCard.setAttribute('data-tone', tone);
       }
+    }
+
+    function safeParseJson(rawValue) {
+      if (!rawValue || typeof rawValue !== 'string') return null;
+      const trimmed = rawValue.trim();
+      if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
+      try {
+        return JSON.parse(trimmed);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function parseIncomingWidgetValue(rawValue) {
+      if (!rawValue || typeof rawValue !== 'string') {
+        return { rawValue: '', payload: null, audioUrl: '' };
+      }
+
+      const parsed = safeParseJson(rawValue);
+      if (parsed && typeof parsed === 'object' && typeof parsed.audioUrl === 'string') {
+        return {
+          rawValue,
+          payload: parsed,
+          audioUrl: parsed.audioUrl || ''
+        };
+      }
+
+      return { rawValue, payload: null, audioUrl: rawValue };
+    }
+
+    function buildAudioPayload({
+      audioUrl,
+      durationMs,
+      sizeBytes,
+      mimeType,
+      extension,
+      recordedAtIso
+    }) {
+      return {
+        v: PAYLOAD_VERSION,
+        audioUrl,
+        durationMs,
+        sizeBytes,
+        mimeType,
+        extension,
+        recordedAt: recordedAtIso
+      };
+    }
+
+    function serializeWidgetValue(payload) {
+      if (!payload) return '';
+      if (WIDGET_VALUE_FORMAT === 'json') return JSON.stringify(payload);
+      return payload.audioUrl || '';
+    }
+
+    function getCurrentWidgetValue() {
+      if (latestAudioPayload) {
+        return serializeWidgetValue(latestAudioPayload);
+      }
+      return latestAudioUrl || '';
     }
 
     function normalizePermissionState(rawState) {
@@ -314,16 +378,28 @@
       }
     }
 
-    async function requestSignedUpload({ fileName, contentType }) {
+    async function requestSignedUpload({ fileName, contentType, metadata = null }) {
       if (!SIGNED_UPLOAD_ENDPOINT) {
         throw new Error('SIGNED_UPLOAD_ENDPOINT nao configurado.');
       }
 
-      const response = await fetch(SIGNED_UPLOAD_ENDPOINT, {
+      const baseBody = { fileName, contentType };
+      const requestBody = metadata && typeof metadata === 'object'
+        ? { ...baseBody, metadata }
+        : baseBody;
+
+      const postSignedUploadRequest = (body) => fetch(SIGNED_UPLOAD_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileName, contentType })
+        body: JSON.stringify(body)
       });
+
+      let response = await postSignedUploadRequest(requestBody);
+
+      if (!response.ok && requestBody !== baseBody) {
+        logInfo('Endpoint recusou metadata no signed upload; retry sem metadata.', response.status);
+        response = await postSignedUploadRequest(baseBody);
+      }
 
       if (!response.ok) {
         throw new Error(`Falha ao obter URL assinada (${response.status}).`);
@@ -410,7 +486,9 @@
         audioChunks = [];
         isRecording = true;
         hasRecordingStarted = true;
+        recordingStartedAtMs = Date.now();
         latestAudioUrl = '';
+        latestAudioPayload = null;
         sendDataToParent({ value: '' }, 'recording-start');
 
         mediaRecorder.ondataavailable = (e) => {
@@ -427,11 +505,24 @@
 
             try {
               const audioBlob = new Blob(audioChunks, { type: recordedMimeType });
-              const fileName = `gravacao-${Date.now()}.${recordedFileExtension}`;
+              const recordingEndedAtMs = Date.now();
+              const durationMs = Math.max(0, recordingEndedAtMs - recordingStartedAtMs);
+              const sizeBytes = audioBlob.size;
+              const recordedAtIso = new Date(recordingEndedAtMs).toISOString();
+              const uploadMetadata = {
+                v: PAYLOAD_VERSION,
+                durationMs,
+                sizeBytes,
+                mimeType: recordedMimeType,
+                extension: recordedFileExtension,
+                recordedAt: recordedAtIso
+              };
+              const fileName = `gravacao-${recordingEndedAtMs}-d${durationMs}ms.${recordedFileExtension}`;
               logInfo('Solicitando URL assinada para upload.', fileName);
               const { uploadUrl, publicUrl } = await requestSignedUpload({
                 fileName,
-                contentType: recordedMimeType
+                contentType: recordedMimeType,
+                metadata: uploadMetadata
               });
 
               logInfo('Enviando arquivo para Supabase via URL assinada.');
@@ -446,17 +537,27 @@
               }
 
               latestAudioUrl = publicUrl;
+              latestAudioPayload = buildAudioPayload({
+                audioUrl: publicUrl,
+                durationMs,
+                sizeBytes,
+                mimeType: recordedMimeType,
+                extension: recordedFileExtension,
+                recordedAtIso
+              });
               logInfo('URL publica gerada.', publicUrl);
               setStatus('Audio pronto para envio.', 'success');
-              sendDataToParent({ value: latestAudioUrl }, 'upload-complete');
+              sendDataToParent({ value: serializeWidgetValue(latestAudioPayload) }, 'upload-complete');
               flushPendingSendData('upload-complete');
             } catch (err) {
               logError('Erro no upload do audio.', err);
               setStatus('Erro ao enviar audio.', 'error');
               latestAudioUrl = '';
+              latestAudioPayload = null;
             } finally {
               isUploading = false;
               recordingFinalizationPromise = null;
+              recordingStartedAtMs = 0;
               updatePermissionUI('post-upload');
               resolve();
             }
@@ -473,6 +574,7 @@
         isRecording = false;
         isUploading = false;
         recordingFinalizationPromise = null;
+        recordingStartedAtMs = 0;
       }
     }
 
@@ -503,7 +605,7 @@
       logInfo('Submit acionado pelo Jotform.');
 
       try {
-        if (!hasRecordingStarted && !latestAudioUrl) {
+        if (!hasRecordingStarted && !getCurrentWidgetValue()) {
           logInfo('Submit bloqueado: gravacao ainda nao iniciada.');
           if (status) setStatus('Inicie a gravacao para continuar.', 'error');
           JFCustomWidget.sendSubmit({
@@ -521,7 +623,9 @@
           await waitForRecordingFinalization();
         }
 
-        if (!latestAudioUrl) {
+        const submitValue = getCurrentWidgetValue();
+
+        if (!submitValue) {
           logInfo('Nenhum audio disponivel no submit.');
           if (status) setStatus('Grave um audio antes de enviar.', 'error');
           JFCustomWidget.sendSubmit({
@@ -531,19 +635,19 @@
           return;
         }
 
-        sendDataToParent({ value: latestAudioUrl }, 'submit-final');
+        sendDataToParent({ value: submitValue }, 'submit-final');
         flushPendingSendData('submit-final');
-        logInfo('URL enviada ao Jotform.', latestAudioUrl);
+        logInfo('Valor final enviado ao Jotform.', submitValue);
         JFCustomWidget.sendSubmit({
           valid: true,
-          value: latestAudioUrl
+          value: submitValue
         });
       } catch (err) {
         logError('Falha ao finalizar audio antes do envio.', err);
         if (status) setStatus('Erro ao finalizar audio. Tente novamente.', 'error');
         JFCustomWidget.sendSubmit({
           valid: false,
-          value: latestAudioUrl || ''
+          value: getCurrentWidgetValue()
         });
       } finally {
         submitInProgress = false;
@@ -565,10 +669,12 @@
 
         initializeControls();
 
-        const initialValue = value || '';
-        if (value) {
+        const incomingValue = parseIncomingWidgetValue(value || '');
+        const initialValue = incomingValue.rawValue || '';
+        if (incomingValue.audioUrl) {
           hasRecordingStarted = true;
-          latestAudioUrl = value;
+          latestAudioUrl = incomingValue.audioUrl;
+          latestAudioPayload = incomingValue.payload;
           const status = document.getElementById('status-text');
           if (status) setStatus('Audio existente pronto para envio.', 'success');
         }

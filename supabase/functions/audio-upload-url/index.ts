@@ -1,0 +1,164 @@
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+type UploadMetadata = {
+  v?: number;
+  durationMs?: number;
+  sizeBytes?: number;
+  mimeType?: string;
+  extension?: string;
+  recordedAt?: string;
+  [key: string]: unknown;
+};
+
+const corsHeaders: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json",
+    },
+  });
+}
+
+function sanitizeFileName(fileName: string): string {
+  const withoutPath = fileName.replaceAll("\\", "/").split("/").pop() ?? "";
+  const compact = withoutPath.trim().replace(/\s+/g, "-");
+  const safe = compact.replace(/[^A-Za-z0-9._-]/g, "");
+  return safe || `audio-${Date.now()}.webm`;
+}
+
+function normalizePositiveInt(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const asInt = Math.trunc(value);
+  return asInt >= 0 ? asInt : null;
+}
+
+function normalizeIsoDate(value: unknown): string | null {
+  if (typeof value !== "string" || value.trim() === "") return null;
+  const dt = new Date(value);
+  if (Number.isNaN(dt.getTime())) return null;
+  return dt.toISOString();
+}
+
+function normalizeMetadata(metadata: unknown): UploadMetadata | null {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return null;
+  }
+
+  const raw = metadata as UploadMetadata;
+  const normalized: UploadMetadata = {};
+
+  const v = normalizePositiveInt(raw.v);
+  if (v !== null) normalized.v = v;
+
+  const durationMs = normalizePositiveInt(raw.durationMs);
+  if (durationMs !== null) normalized.durationMs = durationMs;
+
+  const sizeBytes = normalizePositiveInt(raw.sizeBytes);
+  if (sizeBytes !== null) normalized.sizeBytes = sizeBytes;
+
+  if (typeof raw.mimeType === "string" && raw.mimeType.trim()) {
+    normalized.mimeType = raw.mimeType.trim().toLowerCase();
+  }
+
+  if (typeof raw.extension === "string" && raw.extension.trim()) {
+    normalized.extension = raw.extension.trim().toLowerCase();
+  }
+
+  const recordedAt = normalizeIsoDate(raw.recordedAt);
+  if (recordedAt) normalized.recordedAt = recordedAt;
+
+  return Object.keys(normalized).length ? normalized : null;
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
+  if (req.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed." }, 405);
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return jsonResponse({ error: "Invalid JSON body." }, 400);
+  }
+
+  const fileName = typeof body.fileName === "string" ? body.fileName : "";
+  const contentType = typeof body.contentType === "string" ? body.contentType : "";
+
+  if (!fileName.trim() || !contentType.trim()) {
+    return jsonResponse({ error: "fileName and contentType are required." }, 400);
+  }
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !serviceRoleKey) {
+    return jsonResponse({ error: "Server env vars are not configured." }, 500);
+  }
+
+  const bucket = (Deno.env.get("AUDIO_UPLOAD_BUCKET") ?? "audios").trim();
+  const folder = (Deno.env.get("AUDIO_UPLOAD_FOLDER") ?? "auditorias").trim().replace(/^\/+|\/+$/g, "");
+  const metadataTable = (Deno.env.get("AUDIO_UPLOAD_METADATA_TABLE") ?? "").trim();
+
+  const safeFileName = sanitizeFileName(fileName);
+  const objectPath = folder ? `${folder}/${safeFileName}` : safeFileName;
+  const metadata = normalizeMetadata(body.metadata);
+
+  const supabase = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { persistSession: false },
+  });
+
+  const { data: signedData, error: signedError } = await supabase.storage
+    .from(bucket)
+    .createSignedUploadUrl(objectPath);
+
+  if (signedError || !signedData?.signedUrl) {
+    return jsonResponse(
+      { error: "Failed to generate signed upload URL.", details: signedError?.message ?? null },
+      500,
+    );
+  }
+
+  const uploadUrl = signedData.signedUrl.startsWith("http")
+    ? signedData.signedUrl
+    : `${supabaseUrl}${signedData.signedUrl}`;
+  const { data: publicData } = supabase.storage.from(bucket).getPublicUrl(objectPath);
+  const publicUrl = publicData.publicUrl;
+
+  if (metadataTable && metadata) {
+    const { error: metadataError } = await supabase.from(metadataTable).insert({
+      object_path: objectPath,
+      public_url: publicUrl,
+      file_name: safeFileName,
+      content_type: contentType.trim().toLowerCase(),
+      payload_version: metadata.v ?? null,
+      duration_ms: metadata.durationMs ?? null,
+      size_bytes: metadata.sizeBytes ?? null,
+      mime_type: metadata.mimeType ?? null,
+      extension: metadata.extension ?? null,
+      recorded_at: metadata.recordedAt ?? null,
+      metadata,
+    });
+
+    if (metadataError) {
+      console.error("[audio-upload-url] metadata insert failed:", metadataError.message);
+    }
+  }
+
+  return jsonResponse({
+    uploadUrl,
+    publicUrl,
+    objectPath,
+    metadataAccepted: Boolean(metadata),
+  });
+});
