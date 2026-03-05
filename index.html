@@ -32,9 +32,6 @@
     let latestAudioPayload = null;
     let widgetRequiresAudio = false;
     let widgetRequiredTemporarilyDisabled = false;
-    let hasPassedRecordingGate = false;
-    let widgetCardVisible = false;
-    let widgetQuestionId = '';
 
     const RECORDER_TARGET_BITRATE = 96000;
     const RECORDER_TIMESLICE_MS = 1000;
@@ -346,13 +343,6 @@
       window.addEventListener('message', (event) => {
         if (event?.data) {
           logInfo('postMessage recebido do parent.', event.data);
-          const eventType = event.data?.type;
-          const eventQid = String(event.data?.qid || '');
-          if (eventType === 'show') {
-            if (!widgetQuestionId || !eventQid || eventQid === widgetQuestionId) {
-              widgetCardVisible = true;
-            }
-          }
         }
       });
 
@@ -550,7 +540,6 @@
         audioChunks = [];
         isRecording = true;
         hasRecordingStarted = true;
-        hasPassedRecordingGate = false;
         recordingStartedAtMs = Date.now();
         latestAudioUrl = '';
         latestAudioPayload = null;
@@ -690,29 +679,6 @@
           return;
         }
 
-        if (isRecording && widgetCardVisible && !hasPassedRecordingGate) {
-          hasPassedRecordingGate = true;
-          widgetCardVisible = false;
-          const recordingProgressPayload = {
-            v: PAYLOAD_VERSION,
-            status: 'recording',
-            startedAt: new Date(recordingStartedAtMs || Date.now()).toISOString()
-          };
-          const progressValue = WIDGET_VALUE_FORMAT === 'json'
-            ? JSON.stringify(recordingProgressPayload)
-            : 'recording';
-          sendDataToParent({ value: progressValue }, 'submit-gate-pass');
-          flushPendingSendData('submit-gate-pass');
-          if (status) {
-            setStatus('Gravacao em andamento. Continue e envie no final do formulario.', 'recording');
-          }
-          JFCustomWidget.sendSubmit({
-            valid: true,
-            value: progressValue
-          });
-          return;
-        }
-
         if (isRecording) {
           if (status) setStatus('Finalizando a gravacao antes do envio...', 'processing');
           await stopActiveRecording('submit');
@@ -782,8 +748,6 @@
 
         initializeControls();
         widgetRequiresAudio = isWidgetRequiredByConfig();
-        widgetQuestionId = String(window.JFCustomWidget?.questionID || '');
-        widgetCardVisible = true;
         logInfo('Widget required (config detectada):', widgetRequiresAudio);
         if (FORCE_WIDGET_REQUIRED_AT_RUNTIME) {
           setWidgetRequiredRuntime(true);
