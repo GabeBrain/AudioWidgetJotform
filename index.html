@@ -40,7 +40,8 @@
     const PAYLOAD_VERSION = 2;
     const WIDGET_VALUE_FORMAT = 'json';
     const FORCE_WIDGET_REQUIRED_AT_RUNTIME = false;
-    const SHOW_PERMISSION_DEBUG_INFO = true;
+    const SHOW_PERMISSION_DEBUG_INFO = false;
+    const SHOW_STATUS_MESSAGES = false;
     const ENABLE_APP_INIT_PERMISSION_RECHECK = true;
     const permissionStateMeta = {
       location: { source: 'boot', detail: 'init' },
@@ -63,6 +64,10 @@
       const statusText = document.getElementById('status-text');
       const statusCard = document.getElementById('status-card');
       const hasMessage = typeof message === 'string' && message.trim().length > 0;
+      if (!SHOW_STATUS_MESSAGES) {
+        requestWidgetResize();
+        return;
+      }
 
       if (statusText) {
         statusText.textContent = message;
@@ -677,7 +682,7 @@
       const status = document.getElementById('status-text');
       const startBtn = document.getElementById('startButton');
 
-      if (!startBtn || !status) return;
+      if (!startBtn) return;
 
       if (!hasAllPermissionsGranted()) {
         setStatus('Permita localizacao e microfone antes de gravar.', 'error');
@@ -1043,11 +1048,11 @@
 
     button {
       width: 100%;
-      min-height: 30px;
-      padding: 4px 7px;
+      min-height: 60px;
+      padding: 8px 7px;
       border: none;
       border-radius: 7px;
-      font-size: 11px;
+      font-size: 12px;
       font-weight: 700;
       cursor: pointer;
     }
@@ -1106,15 +1111,6 @@
       color: #1d4ed8;
     }
 
-    .debug-line {
-      margin-top: 3px;
-      color: #64748b;
-      font-size: 9px;
-      line-height: 1.15;
-      letter-spacing: 0.1px;
-      word-break: break-word;
-    }
-
     .hidden {
       display: none !important;
     }
@@ -1134,7 +1130,6 @@
     <div id="status-card" class="status-line hidden" data-tone="neutral">
       <p id="status-text"></p>
     </div>
-    <div id="permission-debug" class="debug-line hidden"></div>
   </div>
 
   <script src="https://js.jotform.com/JotFormCustomWidget.min.js?onload=onJotformReady"></script>
