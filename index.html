@@ -257,19 +257,25 @@
       }
     }
 
+    function mergePermissionState(currentState, queriedState) {
+      if (!queriedState) return currentState;
+      // WebViews (ex.: app do Jotform) podem reportar "prompt/denied" mesmo apos permissao real concedida.
+      // Mantemos "granted" quando ele ja foi comprovado por sucesso de getUserMedia/geolocation.
+      if (currentState === 'granted' && queriedState !== 'granted') {
+        return currentState;
+      }
+      return queriedState;
+    }
+
     async function refreshPermissionStates(context = 'refresh') {
       const [geoState, micState] = await Promise.all([
         queryPermissionState('geolocation'),
         queryPermissionState('microphone')
       ]);
 
-      if (geoState) {
-        locationPermissionState = geoState;
-      }
+      locationPermissionState = mergePermissionState(locationPermissionState, geoState);
 
-      if (micState) {
-        microphonePermissionState = micState;
-      }
+      microphonePermissionState = mergePermissionState(microphonePermissionState, micState);
 
       logInfo('Estados de permissao atualizados.', {
         context,
