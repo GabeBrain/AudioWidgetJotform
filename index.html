@@ -397,15 +397,32 @@
       let response = await postSignedUploadRequest(requestBody);
 
       if (!response.ok && requestBody !== baseBody) {
-        logInfo('Endpoint recusou metadata no signed upload; retry sem metadata.', response.status);
+        let metadataFailureDetail = '';
+        try {
+          metadataFailureDetail = await response.text();
+        } catch (_) {}
+        logInfo(
+          'Endpoint recusou metadata no signed upload; retry sem metadata.',
+          response.status,
+          metadataFailureDetail?.slice(0, 300) || ''
+        );
         response = await postSignedUploadRequest(baseBody);
       }
 
       if (!response.ok) {
-        throw new Error(`Falha ao obter URL assinada (${response.status}).`);
+        let finalFailureDetail = '';
+        try {
+          finalFailureDetail = await response.text();
+        } catch (_) {}
+        throw new Error(
+          `Falha ao obter URL assinada (${response.status}). ${finalFailureDetail?.slice(0, 300) || ''}`.trim()
+        );
       }
-
-      return response.json();
+      const data = await response.json();
+      if (!data?.uploadUrl || !data?.publicUrl) {
+        throw new Error('Resposta invalida da URL assinada (uploadUrl/publicUrl ausentes).');
+      }
+      return data;
     }
 
     function releaseActiveStream() {
@@ -668,6 +685,14 @@
         widgetInitialized = true;
 
         initializeControls();
+        if (window.JFCustomWidget?.makeWidgetRequired) {
+          try {
+            window.JFCustomWidget.makeWidgetRequired();
+            logInfo('Widget marcado como obrigatorio em runtime.');
+          } catch (err) {
+            logInfo('Nao foi possivel marcar widget como obrigatorio.', err?.message || err);
+          }
+        }
 
         const incomingValue = parseIncomingWidgetValue(value || '');
         const initialValue = incomingValue.rawValue || '';
