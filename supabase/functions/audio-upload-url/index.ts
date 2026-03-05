@@ -26,6 +26,15 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function errorToMessage(err: unknown): string {
+  if (!err) return "Unknown error";
+  if (typeof err === "string") return err;
+  if (typeof err === "object" && "message" in err) {
+    return String((err as { message?: unknown }).message ?? "Unknown error");
+  }
+  return String(err);
+}
+
 function sanitizeFileName(fileName: string): string {
   const withoutPath = fileName.replaceAll("\\", "/").split("/").pop() ?? "";
   const compact = withoutPath.trim().replace(/\s+/g, "-");
@@ -78,87 +87,143 @@ function normalizeMetadata(metadata: unknown): UploadMetadata | null {
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: corsHeaders });
-  }
-
-  if (req.method !== "POST") {
-    return jsonResponse({ error: "Method not allowed." }, 405);
-  }
-
-  let body: Record<string, unknown>;
+  const requestId = crypto.randomUUID();
   try {
-    body = await req.json();
-  } catch {
-    return jsonResponse({ error: "Invalid JSON body." }, 400);
-  }
+    if (req.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: corsHeaders });
+    }
 
-  const fileName = typeof body.fileName === "string" ? body.fileName : "";
-  const contentType = typeof body.contentType === "string" ? body.contentType : "";
+    if (req.method !== "POST") {
+      return jsonResponse({ error: "Method not allowed.", requestId }, 405);
+    }
 
-  if (!fileName.trim() || !contentType.trim()) {
-    return jsonResponse({ error: "fileName and contentType are required." }, 400);
-  }
+    let body: Record<string, unknown>;
+    try {
+      body = await req.json();
+    } catch {
+      return jsonResponse({ error: "Invalid JSON body.", requestId }, 400);
+    }
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !serviceRoleKey) {
-    return jsonResponse({ error: "Server env vars are not configured." }, 500);
-  }
+    const fileName = typeof body.fileName === "string" ? body.fileName : "";
+    const contentType = typeof body.contentType === "string" ? body.contentType : "";
 
-  const bucket = (Deno.env.get("AUDIO_UPLOAD_BUCKET") ?? "audios").trim();
-  const folder = (Deno.env.get("AUDIO_UPLOAD_FOLDER") ?? "auditorias").trim().replace(/^\/+|\/+$/g, "");
-  const metadataTable = (Deno.env.get("AUDIO_UPLOAD_METADATA_TABLE") ?? "").trim();
+    if (!fileName.trim() || !contentType.trim()) {
+      return jsonResponse({ error: "fileName and contentType are required.", requestId }, 400);
+    }
 
-  const safeFileName = sanitizeFileName(fileName);
-  const objectPath = folder ? `${folder}/${safeFileName}` : safeFileName;
-  const metadata = normalizeMetadata(body.metadata);
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!supabaseUrl || !serviceRoleKey) {
+      return jsonResponse(
+        {
+          error: "Server env vars are not configured.",
+          details: "SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing.",
+          requestId,
+        },
+        500,
+      );
+    }
 
-  const supabase = createClient(supabaseUrl, serviceRoleKey, {
-    auth: { persistSession: false },
-  });
+    const bucket = (Deno.env.get("AUDIO_UPLOAD_BUCKET") ?? "audios").trim();
+    const folder = (Deno.env.get("AUDIO_UPLOAD_FOLDER") ?? "auditorias").trim().replace(/^\/+|\/+$/g, "");
+    const metadataTable = (Deno.env.get("AUDIO_UPLOAD_METADATA_TABLE") ?? "").trim();
 
-  const { data: signedData, error: signedError } = await supabase.storage
-    .from(bucket)
-    .createSignedUploadUrl(objectPath);
+    const safeFileName = sanitizeFileName(fileName);
+    const objectPath = folder ? `${folder}/${safeFileName}` : safeFileName;
+    const metadata = normalizeMetadata(body.metadata);
 
-  if (signedError || !signedData?.signedUrl) {
+    const supabase = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { persistSession: false },
+    });
+
+    const { error: bucketError } = await supabase.storage.getBucket(bucket);
+    if (bucketError) {
+      console.error("[audio-upload-url] bucket check failed", {
+        requestId,
+        bucket,
+        message: bucketError.message,
+      });
+      return jsonResponse(
+        {
+          error: "Storage bucket unavailable.",
+          details: bucketError.message,
+          bucket,
+          requestId,
+        },
+        500,
+      );
+    }
+
+    const { data: signedData, error: signedError } = await supabase.storage
+      .from(bucket)
+      .createSignedUploadUrl(objectPath);
+
+    if (signedError || !signedData?.signedUrl) {
+      console.error("[audio-upload-url] signed URL generation failed", {
+        requestId,
+        bucket,
+        objectPath,
+        message: signedError?.message ?? "signedUrl missing",
+      });
+      return jsonResponse(
+        {
+          error: "Failed to generate signed upload URL.",
+          details: signedError?.message ?? "signedUrl missing",
+          bucket,
+          objectPath,
+          requestId,
+        },
+        500,
+      );
+    }
+
+    const uploadUrl = signedData.signedUrl.startsWith("http")
+      ? signedData.signedUrl
+      : new URL(signedData.signedUrl, supabaseUrl).toString();
+    const { data: publicData } = supabase.storage.from(bucket).getPublicUrl(objectPath);
+    const publicUrl = publicData.publicUrl;
+
+    if (metadataTable && metadata) {
+      const { error: metadataError } = await supabase.from(metadataTable).insert({
+        object_path: objectPath,
+        public_url: publicUrl,
+        file_name: safeFileName,
+        content_type: contentType.trim().toLowerCase(),
+        payload_version: metadata.v ?? null,
+        duration_ms: metadata.durationMs ?? null,
+        size_bytes: metadata.sizeBytes ?? null,
+        mime_type: metadata.mimeType ?? null,
+        extension: metadata.extension ?? null,
+        recorded_at: metadata.recordedAt ?? null,
+        metadata,
+      });
+
+      if (metadataError) {
+        console.error("[audio-upload-url] metadata insert failed:", {
+          requestId,
+          table: metadataTable,
+          message: metadataError.message,
+        });
+      }
+    }
+
+    return jsonResponse({
+      uploadUrl,
+      publicUrl,
+      objectPath,
+      metadataAccepted: Boolean(metadata),
+      requestId,
+    });
+  } catch (err) {
+    const message = errorToMessage(err);
+    console.error("[audio-upload-url] unhandled error", { requestId, message });
     return jsonResponse(
-      { error: "Failed to generate signed upload URL.", details: signedError?.message ?? null },
+      {
+        error: "Unhandled function error.",
+        details: message,
+        requestId,
+      },
       500,
     );
   }
-
-  const uploadUrl = signedData.signedUrl.startsWith("http")
-    ? signedData.signedUrl
-    : `${supabaseUrl}${signedData.signedUrl}`;
-  const { data: publicData } = supabase.storage.from(bucket).getPublicUrl(objectPath);
-  const publicUrl = publicData.publicUrl;
-
-  if (metadataTable && metadata) {
-    const { error: metadataError } = await supabase.from(metadataTable).insert({
-      object_path: objectPath,
-      public_url: publicUrl,
-      file_name: safeFileName,
-      content_type: contentType.trim().toLowerCase(),
-      payload_version: metadata.v ?? null,
-      duration_ms: metadata.durationMs ?? null,
-      size_bytes: metadata.sizeBytes ?? null,
-      mime_type: metadata.mimeType ?? null,
-      extension: metadata.extension ?? null,
-      recorded_at: metadata.recordedAt ?? null,
-      metadata,
-    });
-
-    if (metadataError) {
-      console.error("[audio-upload-url] metadata insert failed:", metadataError.message);
-    }
-  }
-
-  return jsonResponse({
-    uploadUrl,
-    publicUrl,
-    objectPath,
-    metadataAccepted: Boolean(metadata),
-  });
 });

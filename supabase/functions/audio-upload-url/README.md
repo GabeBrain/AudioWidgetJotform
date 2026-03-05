@@ -30,6 +30,8 @@ Edge Function para gerar URL assinada de upload no Supabase Storage, com suporte
 }
 ```
 
+Em caso de erro, a resposta agora retorna tambem `requestId` para correlacionar com logs da Edge Function.
+
 ### Variaveis de ambiente
 
 - `SUPABASE_URL` (obrigatoria)
@@ -42,3 +44,7 @@ Edge Function para gerar URL assinada de upload no Supabase Storage, com suporte
 
 - O widget agora envia JSON no campo do Jotform (`WIDGET_VALUE_FORMAT = 'json'`) com `audioUrl`, `durationMs`, `sizeBytes`, etc.
 - A funcao aceita metadata opcional e o frontend faz fallback automatico sem metadata se o endpoint antigo recusar.
+- Se houver `500`, verifique primeiro:
+  - nome real do bucket configurado em `AUDIO_UPLOAD_BUCKET` (default `audios`);
+  - se `SUPABASE_SERVICE_ROLE_KEY` pertence ao mesmo projeto;
+  - logs da funcao usando o `requestId` retornado no corpo de erro.
