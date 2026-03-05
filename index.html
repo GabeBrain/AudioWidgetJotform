@@ -35,6 +35,7 @@
     const RECORDER_TIMESLICE_MS = 1000;
     const PAYLOAD_VERSION = 2;
     const WIDGET_VALUE_FORMAT = 'json';
+    const FORCE_WIDGET_REQUIRED_AT_RUNTIME = false;
     const MOBILE_AUDIO_CONSTRAINTS = {
       channelCount: { ideal: 1 },
       sampleRate: { ideal: 48000 },
@@ -119,6 +120,14 @@
         return serializeWidgetValue(latestAudioPayload);
       }
       return latestAudioUrl || '';
+    }
+
+    function isWidgetRequiredByConfig() {
+      try {
+        return Boolean(window.JFCustomWidget?.isWidgetRequired?.());
+      } catch (_) {
+        return false;
+      }
     }
 
     function normalizePermissionState(rawState) {
@@ -613,6 +622,7 @@
 
     async function handleWidgetSubmit() {
       const status = document.getElementById('status-text');
+      const shouldRequireAudio = FORCE_WIDGET_REQUIRED_AT_RUNTIME || isWidgetRequiredByConfig();
 
       if (submitInProgress) {
         return;
@@ -622,7 +632,7 @@
       logInfo('Submit acionado pelo Jotform.');
 
       try {
-        if (!hasRecordingStarted && !getCurrentWidgetValue()) {
+        if (shouldRequireAudio && !hasRecordingStarted && !getCurrentWidgetValue()) {
           logInfo('Submit bloqueado: gravacao ainda nao iniciada.');
           if (status) setStatus('Inicie a gravacao para continuar.', 'error');
           JFCustomWidget.sendSubmit({
@@ -643,6 +653,14 @@
         const submitValue = getCurrentWidgetValue();
 
         if (!submitValue) {
+          if (!shouldRequireAudio) {
+            logInfo('Submit permitido sem audio (widget nao obrigatorio).');
+            JFCustomWidget.sendSubmit({
+              valid: true,
+              value: ''
+            });
+            return;
+          }
           logInfo('Nenhum audio disponivel no submit.');
           if (status) setStatus('Grave um audio antes de enviar.', 'error');
           JFCustomWidget.sendSubmit({
@@ -661,6 +679,13 @@
         });
       } catch (err) {
         logError('Falha ao finalizar audio antes do envio.', err);
+        if (!shouldRequireAudio) {
+          JFCustomWidget.sendSubmit({
+            valid: true,
+            value: getCurrentWidgetValue()
+          });
+          return;
+        }
         if (status) setStatus('Erro ao finalizar audio. Tente novamente.', 'error');
         JFCustomWidget.sendSubmit({
           valid: false,
@@ -685,7 +710,7 @@
         widgetInitialized = true;
 
         initializeControls();
-        if (window.JFCustomWidget?.makeWidgetRequired) {
+        if (FORCE_WIDGET_REQUIRED_AT_RUNTIME && window.JFCustomWidget?.makeWidgetRequired) {
           try {
             window.JFCustomWidget.makeWidgetRequired();
             logInfo('Widget marcado como obrigatorio em runtime.');
