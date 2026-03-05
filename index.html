@@ -27,6 +27,8 @@
     let recordedFileExtension = 'webm';
     let locationPermissionState = 'pending';
     let microphonePermissionState = 'pending';
+    let isJotformAppRuntime = false;
+    let appInitPermissionRecheckDone = false;
     let hasRecordingStarted = false;
     let recordingStartedAtMs = 0;
     let latestAudioPayload = null;
@@ -38,6 +40,12 @@
     const PAYLOAD_VERSION = 2;
     const WIDGET_VALUE_FORMAT = 'json';
     const FORCE_WIDGET_REQUIRED_AT_RUNTIME = false;
+    const SHOW_PERMISSION_DEBUG_INFO = true;
+    const ENABLE_APP_INIT_PERMISSION_RECHECK = true;
+    const permissionStateMeta = {
+      location: { source: 'boot', detail: 'init' },
+      microphone: { source: 'boot', detail: 'init' }
+    };
     const MOBILE_AUDIO_CONSTRAINTS = {
       channelCount: { ideal: 1 },
       sampleRate: { ideal: 48000 },
@@ -175,6 +183,61 @@
       return 'pending';
     }
 
+    function shortenDebugText(input) {
+      const text = String(input || '').trim().replace(/\s+/g, ' ');
+      if (!text) return '';
+      return text.length > 54 ? `${text.slice(0, 54)}...` : text;
+    }
+
+    function setPermissionMeta(kind, source, detail = '') {
+      if (!permissionStateMeta[kind]) return;
+      permissionStateMeta[kind] = {
+        source: shortenDebugText(source || 'unknown'),
+        detail: shortenDebugText(detail || '')
+      };
+    }
+
+    function setPermissionState(kind, nextState, source = 'unknown', detail = '') {
+      const normalized = normalizePermissionState(nextState);
+      if (kind === 'location') {
+        locationPermissionState = normalized;
+      } else if (kind === 'microphone') {
+        microphonePermissionState = normalized;
+      } else {
+        return;
+      }
+      setPermissionMeta(kind, source, detail);
+      updatePermissionDebugUI();
+      logInfo('Estado de permissao atualizado.', { kind, state: normalized, source, detail });
+    }
+
+    function stateToShortLabel(state) {
+      if (state === 'granted') return 'ok';
+      if (state === 'denied') return 'deny';
+      if (state === 'checking') return 'chk';
+      return 'pend';
+    }
+
+    function updatePermissionDebugUI() {
+      const debugLine = document.getElementById('permission-debug');
+      if (!debugLine) return;
+      if (!SHOW_PERMISSION_DEBUG_INFO) {
+        debugLine.classList.add('hidden');
+        return;
+      }
+
+      const locationMeta = permissionStateMeta.location || {};
+      const micMeta = permissionStateMeta.microphone || {};
+      const locationDetail = locationMeta.detail ? `,${locationMeta.detail}` : '';
+      const micDetail = micMeta.detail ? `,${micMeta.detail}` : '';
+      const locationChunk = `L:${stateToShortLabel(locationPermissionState)}(${locationMeta.source || '-'}${locationDetail})`;
+      const micChunk = `M:${stateToShortLabel(microphonePermissionState)}(${micMeta.source || '-'}${micDetail})`;
+      const appChunk = isJotformAppRuntime ? 'app:yes' : 'app:no';
+      debugLine.textContent = `${locationChunk} ${micChunk} ${appChunk}`;
+      debugLine.classList.remove('hidden');
+      requestWidgetResize();
+    }
+
     function hasAllPermissionsGranted() {
       return locationPermissionState === 'granted' && microphonePermissionState === 'granted';
     }
@@ -191,11 +254,13 @@
       button.disabled = false;
 
       if (state === 'granted') {
+        button.textContent = `${baseLabel} OK`;
         button.classList.add('is-granted');
         return;
       }
 
       if (state === 'checking') {
+        button.textContent = `${baseLabel} ...`;
         button.classList.add('is-checking');
         button.disabled = true;
         return;
@@ -203,6 +268,7 @@
 
       button.classList.add('is-pending');
       if (state === 'denied') {
+        button.textContent = `${baseLabel} Negado`;
         button.classList.add('is-denied');
       }
     }
@@ -210,6 +276,7 @@
     function updatePermissionUI(context = 'default') {
       updatePermissionRow('location', locationPermissionState);
       updatePermissionRow('microphone', microphonePermissionState);
+      updatePermissionDebugUI();
 
       const permissionsStep = document.getElementById('permissions-step');
       const startSection = document.getElementById('recording-step');
@@ -257,6 +324,26 @@
       }
     }
 
+    async function inferMicrophonePermissionFromDevices() {
+      if (!navigator.mediaDevices?.enumerateDevices) {
+        return null;
+      }
+
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const hasLabeledAudioInput = devices.some((device) =>
+          device?.kind === 'audioinput' && typeof device?.label === 'string' && device.label.trim().length > 0
+        );
+        if (hasLabeledAudioInput) {
+          return 'granted';
+        }
+        return null;
+      } catch (err) {
+        logInfo('Nao foi possivel inferir permissao do microfone via enumerateDevices.', err?.message || err);
+        return null;
+      }
+    }
+
     function mergePermissionState(currentState, queriedState) {
       if (!queriedState) return currentState;
       // WebViews (ex.: app do Jotform) podem reportar "prompt/denied" mesmo apos permissao real concedida.
@@ -268,14 +355,27 @@
     }
 
     async function refreshPermissionStates(context = 'refresh') {
-      const [geoState, micState] = await Promise.all([
+      const [geoState, rawMicState] = await Promise.all([
         queryPermissionState('geolocation'),
         queryPermissionState('microphone')
       ]);
+      let micState = rawMicState;
+      if (micState !== 'granted' && microphonePermissionState !== 'granted') {
+        const inferredMicState = await inferMicrophonePermissionFromDevices();
+        if (inferredMicState === 'granted') {
+          micState = inferredMicState;
+        }
+      }
 
-      locationPermissionState = mergePermissionState(locationPermissionState, geoState);
-
-      microphonePermissionState = mergePermissionState(microphonePermissionState, micState);
+      const mergedLocationState = mergePermissionState(locationPermissionState, geoState);
+      const mergedMicrophoneState = mergePermissionState(microphonePermissionState, micState);
+      setPermissionState('location', mergedLocationState, `query:${context}`, geoState ? `q:${geoState}` : 'q:none');
+      setPermissionState(
+        'microphone',
+        mergedMicrophoneState,
+        `query:${context}`,
+        micState ? `q:${micState}` : 'q:none'
+      );
 
       logInfo('Estados de permissao atualizados.', {
         context,
@@ -288,49 +388,95 @@
 
     function requestLocationPermission() {
       if (!navigator.geolocation) {
-        locationPermissionState = 'denied';
+        setPermissionState('location', 'denied', 'probe:location', 'geolocation indisponivel');
         updatePermissionUI();
         setStatus('Localizacao nao suportada neste navegador.', 'error');
         return;
       }
 
-      locationPermissionState = 'checking';
+      setPermissionState('location', 'checking', 'probe:location', 'solicitando');
       updatePermissionUI('checking');
       logInfo('Solicitando permissao de localizacao.');
 
       navigator.geolocation.getCurrentPosition(
         () => {
           logInfo('Permissao de localizacao concedida.');
-          locationPermissionState = 'granted';
+          setPermissionState('location', 'granted', 'probe:location', 'ok:getCurrentPosition');
           updatePermissionUI();
           refreshPermissionStates('location').catch(() => {});
         },
-        (err) => {
+        async (err) => {
           logError('Erro ao obter permissao de localizacao.', err);
-          locationPermissionState = Number(err?.code) === 1 ? 'denied' : 'pending';
+          const code = Number(err?.code);
+          if (code === 1) {
+            setPermissionState('location', 'denied', 'probe:location', 'err:code1 denied');
+            updatePermissionUI();
+            return;
+          }
+
+          const queried = await queryPermissionState('geolocation');
+          if (queried === 'denied') {
+            setPermissionState('location', 'denied', 'probe:location', `q:denied code:${code || 'na'}`);
+            updatePermissionUI();
+            return;
+          }
+
+          if (code === 2 || code === 3 || queried === 'granted') {
+            // Em alguns dispositivos a permissao existe, mas o fix de GPS falha/expira.
+            setPermissionState(
+              'location',
+              'granted',
+              'probe:location',
+              `sem-fix code:${code || 'na'} q:${queried || 'none'}`
+            );
+            updatePermissionUI();
+            return;
+          }
+
+          setPermissionState('location', 'pending', 'probe:location', `code:${code || 'na'} q:${queried || 'none'}`);
           updatePermissionUI();
         },
         {
           enableHighAccuracy: false,
-          timeout: 10000,
-          maximumAge: 0
+          timeout: 12000,
+          maximumAge: 60000
         }
       );
     }
 
     async function requestMicrophonePermission() {
       logInfo('Solicitando permissao de microfone.');
-      microphonePermissionState = 'checking';
+      setPermissionState('microphone', 'checking', 'probe:microphone', 'solicitando');
       updatePermissionUI('checking');
 
       try {
         const stream = await getAudioStreamForRecording();
         stream.getTracks().forEach(track => track.stop());
         logInfo('Permissao de microfone concedida.');
-        microphonePermissionState = 'granted';
+        setPermissionState('microphone', 'granted', 'probe:microphone', 'ok:getUserMedia');
       } catch (err) {
         logError('Erro ao obter permissao de microfone.', err);
-        microphonePermissionState = ['NotAllowedError', 'SecurityError'].includes(err?.name) ? 'denied' : 'pending';
+        const errName = err?.name || 'unknown';
+        if (['NotAllowedError', 'SecurityError'].includes(errName)) {
+          setPermissionState('microphone', 'denied', 'probe:microphone', `err:${errName}`);
+        } else {
+          const queried = await queryPermissionState('microphone');
+          if (queried === 'granted') {
+            setPermissionState('microphone', 'granted', 'probe:microphone', `q:granted apos err:${errName}`);
+          } else {
+            const inferred = await inferMicrophonePermissionFromDevices();
+            if (inferred === 'granted') {
+              setPermissionState('microphone', 'granted', 'probe:microphone', `devices:granted err:${errName}`);
+            } else {
+              setPermissionState(
+                'microphone',
+                queried === 'denied' ? 'denied' : 'pending',
+                'probe:microphone',
+                `err:${errName} q:${queried || 'none'}`
+              );
+            }
+          }
+        }
       }
 
       updatePermissionUI();
@@ -341,6 +487,24 @@
       window.addEventListener('message', (event) => {
         if (event?.data) {
           logInfo('postMessage recebido do parent.', event.data);
+          let payload = event.data;
+          if (typeof payload === 'string') {
+            try {
+              payload = JSON.parse(payload);
+            } catch (_) {}
+          }
+          if (payload && typeof payload === 'object' && payload.type === 'ready') {
+            const nextIsApp = Boolean(payload.isApp);
+            if (nextIsApp !== isJotformAppRuntime) {
+              isJotformAppRuntime = nextIsApp;
+              setPermissionMeta('location', permissionStateMeta.location?.source || 'ready', `isApp:${nextIsApp}`);
+              setPermissionMeta('microphone', permissionStateMeta.microphone?.source || 'ready', `isApp:${nextIsApp}`);
+              updatePermissionDebugUI();
+              runAppInitPermissionRecheck('postMessage-ready').catch(err => {
+                logInfo('Revalidacao por postMessage ready falhou.', err?.message || err);
+              });
+            }
+          }
         }
       });
 
@@ -466,6 +630,26 @@
         activeStream.getTracks().forEach(track => track.stop());
       } catch (_) {}
       activeStream = null;
+    }
+
+    async function runAppInitPermissionRecheck(reason = 'init') {
+      if (!ENABLE_APP_INIT_PERMISSION_RECHECK || !isJotformAppRuntime || appInitPermissionRecheckDone) {
+        return;
+      }
+      appInitPermissionRecheckDone = true;
+      logInfo('Revalidacao ativa de permissao no app Jotform.', {
+        reason,
+        locationPermissionState,
+        microphonePermissionState
+      });
+
+      if (locationPermissionState !== 'granted') {
+        requestLocationPermission();
+      }
+
+      if (microphonePermissionState !== 'granted') {
+        await requestMicrophonePermission();
+      }
     }
 
     function initializeControls() {
@@ -739,8 +923,13 @@
       widgetSubscriptionsRegistered = true;
       logInfo('Registrando eventos do Jotform.');
 
-      JFCustomWidget.subscribe('ready', ({ value } = {}) => {
-        logInfo('Evento ready recebido.', value);
+      JFCustomWidget.subscribe('ready', (readyPayload = {}) => {
+        const value = readyPayload?.value;
+        if (typeof readyPayload?.isApp === 'boolean') {
+          isJotformAppRuntime = readyPayload.isApp;
+          updatePermissionDebugUI();
+        }
+        logInfo('Evento ready recebido.', readyPayload);
         if (widgetInitialized) return;
         widgetInitialized = true;
 
@@ -764,6 +953,9 @@
 
         sendDataToParent({ value: initialValue }, 'ready');
         flushPendingSendData('ready');
+        runAppInitPermissionRecheck('ready').catch(err => {
+          logInfo('Revalidacao inicial de permissao (app) falhou.', err?.message || err);
+        });
       });
 
       JFCustomWidget.subscribe('submit', () => {
@@ -914,6 +1106,15 @@
       color: #1d4ed8;
     }
 
+    .debug-line {
+      margin-top: 3px;
+      color: #64748b;
+      font-size: 9px;
+      line-height: 1.15;
+      letter-spacing: 0.1px;
+      word-break: break-word;
+    }
+
     .hidden {
       display: none !important;
     }
@@ -933,6 +1134,7 @@
     <div id="status-card" class="status-line hidden" data-tone="neutral">
       <p id="status-text"></p>
     </div>
+    <div id="permission-debug" class="debug-line hidden"></div>
   </div>
 
   <script src="https://js.jotform.com/JotFormCustomWidget.min.js?onload=onJotformReady"></script>
