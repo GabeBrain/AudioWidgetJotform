@@ -281,6 +281,29 @@
       }
     }
 
+    function applyStartButtonVisualState(state, disabled = false) {
+      const startBtn = document.getElementById('startButton');
+      if (!startBtn) return;
+
+      startBtn.classList.remove('is-ready', 'is-recording', 'is-uploading', 'is-complete');
+
+      if (state === 'recording') {
+        startBtn.classList.add('is-recording');
+        startBtn.textContent = 'Gravando... Pode avancar';
+      } else if (state === 'uploading') {
+        startBtn.classList.add('is-uploading');
+        startBtn.textContent = 'Finalizando audio...';
+      } else if (state === 'complete') {
+        startBtn.classList.add('is-complete');
+        startBtn.textContent = 'Gravacao iniciada';
+      } else {
+        startBtn.classList.add('is-ready');
+        startBtn.textContent = 'Iniciar Gravacao';
+      }
+
+      startBtn.disabled = Boolean(disabled);
+    }
+
     function updatePermissionUI(context = 'default') {
       updatePermissionRow('location', locationPermissionState);
       updatePermissionRow('microphone', microphonePermissionState);
@@ -299,8 +322,18 @@
         startSection.classList.toggle('hidden', !permissionsGranted);
       }
 
-      if (startBtn && !isRecording) {
-        startBtn.disabled = !permissionsGranted || isUploading;
+      if (startBtn) {
+        if (!permissionsGranted) {
+          applyStartButtonVisualState('ready', true);
+        } else if (isRecording) {
+          applyStartButtonVisualState('recording', true);
+        } else if (isUploading) {
+          applyStartButtonVisualState('uploading', true);
+        } else if (latestAudioUrl) {
+          applyStartButtonVisualState('complete', true);
+        } else {
+          applyStartButtonVisualState('ready', false);
+        }
       }
 
       if (isRecording || isUploading) return;
@@ -765,7 +798,6 @@
     }
 
     async function startRecording() {
-      const status = document.getElementById('status-text');
       const startBtn = document.getElementById('startButton');
 
       if (!startBtn) return;
@@ -777,6 +809,7 @@
 
       if (isRecording) {
         setStatus('Gravando..', 'recording');
+        updatePermissionUI('already-recording');
         return;
       }
 
@@ -832,6 +865,7 @@
             releaseActiveStream();
             isUploading = true;
             setStatus('Processando e enviando audio...', 'processing');
+            updatePermissionUI('uploading');
 
             try {
               const audioBlob = new Blob(audioChunks, { type: recordedMimeType });
@@ -899,7 +933,7 @@
 
         mediaRecorder.start(RECORDER_TIMESLICE_MS);
         setStatus('Gravando..', 'recording');
-        startBtn.disabled = true;
+        updatePermissionUI('recording-started');
       } catch (err) {
         logError('Erro ao iniciar gravacao.', err);
         setStatus(`Erro: ${err.name}`, 'error');
@@ -911,6 +945,7 @@
         if ((FORCE_WIDGET_REQUIRED_AT_RUNTIME || widgetRequiresAudio) && widgetRequiredTemporarilyDisabled) {
           setWidgetRequiredRuntime(true);
         }
+        updatePermissionUI('recording-start-error');
       }
     }
 
@@ -1100,7 +1135,12 @@
       --pending-fg: #991b1b;
       --wait-bg: #fef3c7;
       --wait-fg: #78350f;
-      --cta-bg: #0f766e;
+      --cta-ready-a: #2563eb;
+      --cta-ready-b: #1d4ed8;
+      --cta-record-a: #22c55e;
+      --cta-record-b: #15803d;
+      --cta-upload-a: #0ea5e9;
+      --cta-upload-b: #2563eb;
       --cta-fg: #ffffff;
     }
 
@@ -1165,8 +1205,31 @@
     }
 
     #startButton {
-      background: var(--cta-bg);
+      background: linear-gradient(135deg, var(--cta-ready-a) 0%, var(--cta-ready-b) 100%);
       color: var(--cta-fg);
+      box-shadow: 0 10px 20px rgba(29, 78, 216, 0.24);
+      transition: background 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
+      letter-spacing: 0.2px;
+    }
+
+    #startButton:disabled {
+      opacity: 1;
+    }
+
+    #startButton.is-recording {
+      background: linear-gradient(135deg, var(--cta-record-a) 0%, var(--cta-record-b) 100%);
+      box-shadow: 0 10px 24px rgba(21, 128, 61, 0.32);
+      animation: pulseRecordingButton 1.5s ease-in-out infinite;
+    }
+
+    #startButton.is-uploading {
+      background: linear-gradient(135deg, var(--cta-upload-a) 0%, var(--cta-upload-b) 100%);
+      box-shadow: 0 10px 22px rgba(14, 165, 233, 0.28);
+    }
+
+    #startButton.is-complete {
+      background: linear-gradient(135deg, var(--cta-record-a) 0%, var(--cta-record-b) 100%);
+      box-shadow: 0 10px 22px rgba(21, 128, 61, 0.3);
     }
 
     .status-line {
@@ -1199,6 +1262,18 @@
 
     .hidden {
       display: none !important;
+    }
+
+    @keyframes pulseRecordingButton {
+      0% {
+        transform: scale(1);
+      }
+      50% {
+        transform: scale(1.02);
+      }
+      100% {
+        transform: scale(1);
+      }
     }
   </style>
 </head>
