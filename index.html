@@ -30,6 +30,11 @@
     let hasRecordingStarted = false;
     let recordingStartedAtMs = 0;
     let latestAudioPayload = null;
+    let widgetRequiresAudio = false;
+    let widgetRequiredTemporarilyDisabled = false;
+    let hasPassedRecordingGate = false;
+    let widgetCardVisible = false;
+    let widgetQuestionId = '';
 
     const RECORDER_TARGET_BITRATE = 96000;
     const RECORDER_TIMESLICE_MS = 1000;
@@ -79,11 +84,12 @@
       }
 
       const parsed = safeParseJson(rawValue);
-      if (parsed && typeof parsed === 'object' && typeof parsed.audioUrl === 'string') {
+      if (parsed && typeof parsed === 'object') {
+        const audioUrl = typeof parsed.audioUrl === 'string' ? parsed.audioUrl : '';
         return {
           rawValue,
           payload: parsed,
-          audioUrl: parsed.audioUrl || ''
+          audioUrl
         };
       }
 
@@ -127,6 +133,31 @@
         return Boolean(window.JFCustomWidget?.isWidgetRequired?.());
       } catch (_) {
         return false;
+      }
+    }
+
+    function setWidgetRequiredRuntime(required) {
+      if (required) {
+        if (window.JFCustomWidget?.makeWidgetRequired) {
+          try {
+            window.JFCustomWidget.makeWidgetRequired();
+            widgetRequiredTemporarilyDisabled = false;
+            logInfo('Widget marcado como obrigatorio em runtime.');
+          } catch (err) {
+            logInfo('Nao foi possivel marcar widget como obrigatorio.', err?.message || err);
+          }
+        }
+        return;
+      }
+
+      if (window.JFCustomWidget?.makeWidgetNotRequired) {
+        try {
+          window.JFCustomWidget.makeWidgetNotRequired();
+          widgetRequiredTemporarilyDisabled = true;
+          logInfo('Obrigatoriedade temporariamente desativada durante gravacao.');
+        } catch (err) {
+          logInfo('Nao foi possivel desativar obrigatoriedade em runtime.', err?.message || err);
+        }
       }
     }
 
@@ -315,6 +346,13 @@
       window.addEventListener('message', (event) => {
         if (event?.data) {
           logInfo('postMessage recebido do parent.', event.data);
+          const eventType = event.data?.type;
+          const eventQid = String(event.data?.qid || '');
+          if (eventType === 'show') {
+            if (!widgetQuestionId || !eventQid || eventQid === widgetQuestionId) {
+              widgetCardVisible = true;
+            }
+          }
         }
       });
 
@@ -512,9 +550,13 @@
         audioChunks = [];
         isRecording = true;
         hasRecordingStarted = true;
+        hasPassedRecordingGate = false;
         recordingStartedAtMs = Date.now();
         latestAudioUrl = '';
         latestAudioPayload = null;
+        if ((FORCE_WIDGET_REQUIRED_AT_RUNTIME || widgetRequiresAudio) && !widgetRequiredTemporarilyDisabled) {
+          setWidgetRequiredRuntime(false);
+        }
         sendDataToParent({ value: '' }, 'recording-start');
 
         mediaRecorder.ondataavailable = (e) => {
@@ -584,6 +626,9 @@
               isUploading = false;
               recordingFinalizationPromise = null;
               recordingStartedAtMs = 0;
+              if ((FORCE_WIDGET_REQUIRED_AT_RUNTIME || widgetRequiresAudio) && widgetRequiredTemporarilyDisabled) {
+                setWidgetRequiredRuntime(true);
+              }
               updatePermissionUI('post-upload');
               resolve();
             }
@@ -601,6 +646,9 @@
         isUploading = false;
         recordingFinalizationPromise = null;
         recordingStartedAtMs = 0;
+        if ((FORCE_WIDGET_REQUIRED_AT_RUNTIME || widgetRequiresAudio) && widgetRequiredTemporarilyDisabled) {
+          setWidgetRequiredRuntime(true);
+        }
       }
     }
 
@@ -622,7 +670,7 @@
 
     async function handleWidgetSubmit() {
       const status = document.getElementById('status-text');
-      const shouldRequireAudio = FORCE_WIDGET_REQUIRED_AT_RUNTIME || isWidgetRequiredByConfig();
+      const shouldRequireAudio = FORCE_WIDGET_REQUIRED_AT_RUNTIME || widgetRequiresAudio;
 
       if (submitInProgress) {
         return;
@@ -638,6 +686,29 @@
           JFCustomWidget.sendSubmit({
             valid: false,
             value: ''
+          });
+          return;
+        }
+
+        if (isRecording && widgetCardVisible && !hasPassedRecordingGate) {
+          hasPassedRecordingGate = true;
+          widgetCardVisible = false;
+          const recordingProgressPayload = {
+            v: PAYLOAD_VERSION,
+            status: 'recording',
+            startedAt: new Date(recordingStartedAtMs || Date.now()).toISOString()
+          };
+          const progressValue = WIDGET_VALUE_FORMAT === 'json'
+            ? JSON.stringify(recordingProgressPayload)
+            : 'recording';
+          sendDataToParent({ value: progressValue }, 'submit-gate-pass');
+          flushPendingSendData('submit-gate-pass');
+          if (status) {
+            setStatus('Gravacao em andamento. Continue e envie no final do formulario.', 'recording');
+          }
+          JFCustomWidget.sendSubmit({
+            valid: true,
+            value: progressValue
           });
           return;
         }
@@ -710,13 +781,13 @@
         widgetInitialized = true;
 
         initializeControls();
-        if (FORCE_WIDGET_REQUIRED_AT_RUNTIME && window.JFCustomWidget?.makeWidgetRequired) {
-          try {
-            window.JFCustomWidget.makeWidgetRequired();
-            logInfo('Widget marcado como obrigatorio em runtime.');
-          } catch (err) {
-            logInfo('Nao foi possivel marcar widget como obrigatorio.', err?.message || err);
-          }
+        widgetRequiresAudio = isWidgetRequiredByConfig();
+        widgetQuestionId = String(window.JFCustomWidget?.questionID || '');
+        widgetCardVisible = true;
+        logInfo('Widget required (config detectada):', widgetRequiresAudio);
+        if (FORCE_WIDGET_REQUIRED_AT_RUNTIME) {
+          setWidgetRequiredRuntime(true);
+          widgetRequiresAudio = true;
         }
 
         const incomingValue = parseIncomingWidgetValue(value || '');
