@@ -43,6 +43,9 @@
     const SHOW_PERMISSION_DEBUG_INFO = false;
     const SHOW_STATUS_MESSAGES = false;
     const ENABLE_APP_INIT_PERMISSION_RECHECK = true;
+    const LOCATION_PERMISSION_TIMEOUT_MS = 3200;
+    const LOCATION_PERMISSION_MAX_AGE_MS = 15 * 60 * 1000;
+    const LOCATION_PERMISSION_BOOT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
     const permissionStateMeta = {
       location: { source: 'boot', detail: 'init' },
       microphone: { source: 'boot', detail: 'init' }
@@ -329,6 +332,54 @@
       }
     }
 
+    function isLikelyMobileWebViewRuntime() {
+      const ua = String(navigator?.userAgent || '').toLowerCase();
+      const isMobile = /android|iphone|ipad|ipod/.test(ua);
+      const hasWebViewHint = ua.includes('wv') || ua.includes('jotform');
+      return isMobile && hasWebViewHint;
+    }
+
+    async function inferLocationPermissionFromProbe({
+      timeoutMs = LOCATION_PERMISSION_TIMEOUT_MS,
+      maximumAgeMs = LOCATION_PERMISSION_MAX_AGE_MS
+    } = {}) {
+      if (!navigator.geolocation?.getCurrentPosition) {
+        return null;
+      }
+
+      return new Promise((resolve) => {
+        navigator.geolocation.getCurrentPosition(
+          () => resolve('granted'),
+          async (err) => {
+            const code = Number(err?.code);
+            if (code === 1) {
+              resolve('denied');
+              return;
+            }
+
+            const queried = await queryPermissionState('geolocation');
+            if (queried === 'granted') {
+              resolve('granted');
+              return;
+            }
+
+            if (code === 2 || code === 3) {
+              // Sem fix de GPS nao significa falta de permissao.
+              resolve('granted');
+              return;
+            }
+
+            resolve(null);
+          },
+          {
+            enableHighAccuracy: false,
+            timeout: timeoutMs,
+            maximumAge: maximumAgeMs
+          }
+        );
+      });
+    }
+
     async function inferMicrophonePermissionFromDevices() {
       if (!navigator.mediaDevices?.enumerateDevices) {
         return null;
@@ -360,10 +411,24 @@
     }
 
     async function refreshPermissionStates(context = 'refresh') {
-      const [geoState, rawMicState] = await Promise.all([
+      const [rawGeoState, rawMicState] = await Promise.all([
         queryPermissionState('geolocation'),
         queryPermissionState('microphone')
       ]);
+      let geoState = rawGeoState;
+      const shouldAttemptLocationProbe = (isJotformAppRuntime || isLikelyMobileWebViewRuntime())
+        && geoState !== 'granted'
+        && locationPermissionState !== 'granted';
+      if (shouldAttemptLocationProbe) {
+        const inferredGeoState = await inferLocationPermissionFromProbe({
+          timeoutMs: LOCATION_PERMISSION_TIMEOUT_MS,
+          maximumAgeMs: LOCATION_PERMISSION_BOOT_MAX_AGE_MS
+        });
+        if (inferredGeoState) {
+          geoState = inferredGeoState;
+        }
+      }
+
       let micState = rawMicState;
       if (micState !== 'granted' && microphonePermissionState !== 'granted') {
         const inferredMicState = await inferMicrophonePermissionFromDevices();
@@ -391,22 +456,32 @@
       updatePermissionUI(context);
     }
 
-    function requestLocationPermission() {
+    function requestLocationPermission(options = {}) {
+      const timeoutMs = Number.isFinite(Number(options?.timeoutMs))
+        ? Math.max(800, Math.trunc(Number(options.timeoutMs)))
+        : LOCATION_PERMISSION_TIMEOUT_MS;
+      const maximumAgeMs = Number.isFinite(Number(options?.maximumAgeMs))
+        ? Math.max(0, Math.trunc(Number(options.maximumAgeMs)))
+        : LOCATION_PERMISSION_MAX_AGE_MS;
+      const source = typeof options?.source === 'string' && options.source.trim()
+        ? options.source.trim()
+        : 'probe:location';
+
       if (!navigator.geolocation) {
-        setPermissionState('location', 'denied', 'probe:location', 'geolocation indisponivel');
+        setPermissionState('location', 'denied', source, 'geolocation indisponivel');
         updatePermissionUI();
         setStatus('Localizacao nao suportada neste navegador.', 'error');
         return;
       }
 
-      setPermissionState('location', 'checking', 'probe:location', 'solicitando');
+      setPermissionState('location', 'checking', source, `solicitando t:${timeoutMs}`);
       updatePermissionUI('checking');
       logInfo('Solicitando permissao de localizacao.');
 
       navigator.geolocation.getCurrentPosition(
         () => {
           logInfo('Permissao de localizacao concedida.');
-          setPermissionState('location', 'granted', 'probe:location', 'ok:getCurrentPosition');
+          setPermissionState('location', 'granted', source, 'ok:getCurrentPosition');
           updatePermissionUI();
           refreshPermissionStates('location').catch(() => {});
         },
@@ -414,14 +489,14 @@
           logError('Erro ao obter permissao de localizacao.', err);
           const code = Number(err?.code);
           if (code === 1) {
-            setPermissionState('location', 'denied', 'probe:location', 'err:code1 denied');
+            setPermissionState('location', 'denied', source, 'err:code1 denied');
             updatePermissionUI();
             return;
           }
 
           const queried = await queryPermissionState('geolocation');
           if (queried === 'denied') {
-            setPermissionState('location', 'denied', 'probe:location', `q:denied code:${code || 'na'}`);
+            setPermissionState('location', 'denied', source, `q:denied code:${code || 'na'}`);
             updatePermissionUI();
             return;
           }
@@ -431,20 +506,20 @@
             setPermissionState(
               'location',
               'granted',
-              'probe:location',
+              source,
               `sem-fix code:${code || 'na'} q:${queried || 'none'}`
             );
             updatePermissionUI();
             return;
           }
 
-          setPermissionState('location', 'pending', 'probe:location', `code:${code || 'na'} q:${queried || 'none'}`);
+          setPermissionState('location', 'pending', source, `code:${code || 'na'} q:${queried || 'none'}`);
           updatePermissionUI();
         },
         {
           enableHighAccuracy: false,
-          timeout: 12000,
-          maximumAge: 60000
+          timeout: timeoutMs,
+          maximumAge: maximumAgeMs
         }
       );
     }
@@ -638,7 +713,8 @@
     }
 
     async function runAppInitPermissionRecheck(reason = 'init') {
-      if (!ENABLE_APP_INIT_PERMISSION_RECHECK || !isJotformAppRuntime || appInitPermissionRecheckDone) {
+      const shouldUseAppRecheck = isJotformAppRuntime || isLikelyMobileWebViewRuntime();
+      if (!ENABLE_APP_INIT_PERMISSION_RECHECK || !shouldUseAppRecheck || appInitPermissionRecheckDone) {
         return;
       }
       appInitPermissionRecheckDone = true;
@@ -649,7 +725,11 @@
       });
 
       if (locationPermissionState !== 'granted') {
-        requestLocationPermission();
+        requestLocationPermission({
+          source: 'bootstrap:location',
+          timeoutMs: LOCATION_PERMISSION_TIMEOUT_MS,
+          maximumAgeMs: LOCATION_PERMISSION_BOOT_MAX_AGE_MS
+        });
       }
 
       if (microphonePermissionState !== 'granted') {
@@ -666,7 +746,13 @@
 
       if (!locationBtn || !microphoneBtn || !startBtn) return;
 
-      locationBtn.addEventListener('click', requestLocationPermission);
+      locationBtn.addEventListener('click', () => {
+        requestLocationPermission({
+          source: 'tap:location',
+          timeoutMs: LOCATION_PERMISSION_TIMEOUT_MS,
+          maximumAgeMs: LOCATION_PERMISSION_MAX_AGE_MS
+        });
+      });
       microphoneBtn.addEventListener('click', requestMicrophonePermission);
       startBtn.addEventListener('click', startRecording);
 
