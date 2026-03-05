@@ -54,6 +54,7 @@
     function setStatus(message, tone = 'neutral') {
       const statusText = document.getElementById('status-text');
       const statusCard = document.getElementById('status-card');
+      const hasMessage = typeof message === 'string' && message.trim().length > 0;
 
       if (statusText) {
         statusText.textContent = message;
@@ -61,7 +62,16 @@
 
       if (statusCard) {
         statusCard.setAttribute('data-tone', tone);
+        statusCard.classList.toggle('hidden', !hasMessage);
       }
+      requestWidgetResize();
+    }
+
+    function requestWidgetResize() {
+      if (!window.JFCustomWidget?.requestFrameResize) return;
+      try {
+        window.JFCustomWidget.requestFrameResize();
+      } catch (_) {}
     }
 
     function safeParseJson(rawValue) {
@@ -170,55 +180,45 @@
     }
 
     function updatePermissionRow(kind, state) {
-      const dot = document.getElementById(`${kind}PermissionDot`);
-      const text = document.getElementById(`${kind}PermissionText`);
       const button = document.getElementById(`${kind}PermissionButton`);
       const isLocation = kind === 'location';
-      const baseLabel = isLocation ? 'localizacao' : 'microfone';
+      const baseLabel = isLocation ? 'Localizacao' : 'Gravador';
 
-      if (dot) {
-        dot.setAttribute('data-state', state);
-      }
+      if (!button) return;
 
-      if (!text || !button) return;
+      button.textContent = baseLabel;
+      button.className = 'perm-btn';
+      button.disabled = false;
 
       if (state === 'granted') {
-        text.textContent = 'Permissao concedida.';
-        button.textContent = 'Concedido';
-        button.className = 'btn-granted';
-        button.disabled = true;
+        button.classList.add('is-granted');
         return;
       }
 
       if (state === 'checking') {
-        text.textContent = 'Verificando permissao...';
-        button.textContent = 'Verificando...';
-        button.className = 'btn-warning';
+        button.classList.add('is-checking');
         button.disabled = true;
         return;
       }
 
+      button.classList.add('is-pending');
       if (state === 'denied') {
-        text.textContent = 'Permissao bloqueada. Toque para tentar novamente.';
-        button.textContent = 'Tentar novamente';
-        button.className = 'btn-danger';
-        button.disabled = false;
-        return;
+        button.classList.add('is-denied');
       }
-
-      text.textContent = 'Permissao pendente.';
-      button.textContent = `Permitir ${baseLabel}`;
-      button.className = 'btn-warning';
-      button.disabled = false;
     }
 
     function updatePermissionUI(context = 'default') {
       updatePermissionRow('location', locationPermissionState);
       updatePermissionRow('microphone', microphonePermissionState);
 
+      const permissionsStep = document.getElementById('permissions-step');
       const startSection = document.getElementById('recording-step');
       const startBtn = document.getElementById('startButton');
       const permissionsGranted = hasAllPermissionsGranted();
+
+      if (permissionsStep) {
+        permissionsStep.classList.toggle('hidden', permissionsGranted);
+      }
 
       if (startSection) {
         startSection.classList.toggle('hidden', !permissionsGranted);
@@ -231,24 +231,16 @@
       if (isRecording || isUploading) return;
 
       if (latestAudioUrl) {
-        setStatus('Audio pronto para envio.', 'success');
-        return;
-      }
-
-      if (permissionsGranted) {
-        setStatus('Permissoes concedidas. Toque para iniciar a gravacao.', 'ready');
+        setStatus('', 'neutral');
         return;
       }
 
       if (locationPermissionState === 'denied' || microphonePermissionState === 'denied') {
-        setStatus('Revise as permissoes para continuar.', 'error');
+        setStatus('Toque nos botoes para permitir.', 'error');
         return;
       }
 
-      setStatus(
-        'Conceda localizacao e microfone para habilitar a gravacao.',
-        context === 'checking' ? 'processing' : 'neutral'
-      );
+      setStatus('', context === 'checking' ? 'processing' : 'neutral');
     }
 
     async function queryPermissionState(permissionName) {
@@ -809,19 +801,18 @@
 
   <style>
     :root {
-      --bg-top: #f0fdf4;
-      --bg-bottom: #eff6ff;
       --surface: #ffffff;
-      --surface-soft: #f8fafc;
+      --border: #dbe2ea;
       --text: #0f172a;
       --muted: #475569;
-      --border: #e2e8f0;
-      --primary: #0f766e;
-      --primary-strong: #115e59;
-      --processing: #1d4ed8;
-      --success: #14532d;
-      --error: #b91c1c;
-      --recording: #b45309;
+      --ok-bg: #dcfce7;
+      --ok-fg: #14532d;
+      --pending-bg: #fee2e2;
+      --pending-fg: #991b1b;
+      --wait-bg: #fef3c7;
+      --wait-fg: #78350f;
+      --cta-bg: #0f766e;
+      --cta-fg: #ffffff;
     }
 
     * {
@@ -829,321 +820,112 @@
     }
 
     body {
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
       margin: 0;
-      padding: 16px;
-      background:
-        radial-gradient(circle at top right, #dcfce7 0%, transparent 45%),
-        linear-gradient(160deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
+      padding: 4px;
+      background: transparent;
       color: var(--text);
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     }
 
     .container {
-      width: min(100%, 360px);
+      width: 100%;
+      max-width: 340px;
+      margin: 0 auto;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 18px;
-      box-shadow: 0 18px 38px rgba(15, 23, 42, 0.08);
-      padding: 20px;
+      border-radius: 10px;
+      padding: 6px;
     }
 
-    h3 {
-      margin: 0;
-      font-size: 20px;
-      line-height: 1.2;
-      color: var(--text);
-    }
-
-    .subtitle {
-      margin: 8px 0 16px;
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.4;
-    }
-
-    .permissions-stack {
+    .actions-row {
       display: grid;
-      gap: 10px;
-    }
-
-    .permission-card {
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      background: var(--surface-soft);
-      padding: 12px;
-    }
-
-    .permission-head {
-      display: flex;
-      align-items: flex-start;
-      gap: 10px;
-      margin-bottom: 10px;
-    }
-
-    .permission-copy {
-      min-width: 0;
-    }
-
-    .permission-title {
-      margin: 0;
-      font-size: 14px;
-      font-weight: 700;
-      color: var(--text);
-    }
-
-    .permission-help {
-      margin: 3px 0 0;
-      font-size: 12px;
-      line-height: 1.35;
-      color: var(--muted);
-    }
-
-    .permission-dot {
-      width: 11px;
-      height: 11px;
-      border-radius: 999px;
-      margin-top: 4px;
-      background: #d97706;
-      animation: pulseDot 1.1s infinite;
-      flex-shrink: 0;
-    }
-
-    .permission-dot[data-state='pending'] {
-      background: #d97706;
-      animation: pulseDot 1.1s infinite;
-    }
-
-    .permission-dot[data-state='checking'] {
-      background: var(--processing);
-      animation: pulseDot 1.1s infinite;
-    }
-
-    .permission-dot[data-state='granted'] {
-      background: var(--success);
-      animation: pulseDot 1.6s infinite;
-    }
-
-    .permission-dot[data-state='denied'] {
-      background: var(--error);
-      animation: none;
-    }
-
-    #recording-step {
-      margin-top: 6px;
+      grid-template-columns: 1fr 1fr;
+      gap: 5px;
     }
 
     button {
-      display: flex;
-      align-items: center;
-      justify-content: center;
       width: 100%;
-      min-height: 50px;
-      padding: 12px;
-      font-size: 15px;
-      font-weight: 600;
-      cursor: pointer;
+      min-height: 30px;
+      padding: 4px 7px;
       border: none;
-      border-radius: 10px;
-      margin-top: 10px;
-      transition: transform 0.15s ease, box-shadow 0.2s ease, background-color 0.2s ease;
-    }
-
-    .permission-card button {
-      margin-top: 0;
-    }
-
-    button svg {
-      margin-right: 8px;
-    }
-
-    button:hover:enabled {
-      transform: translateY(-1px);
-      box-shadow: 0 10px 20px rgba(15, 23, 42, 0.12);
-    }
-
-    .btn-primary,
-    .btn-success {
-      color: #ffffff;
-      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-strong) 100%);
-    }
-
-    .btn-warning {
-      color: #78350f;
-      background: #fef3c7;
-    }
-
-    .btn-danger {
-      color: #7f1d1d;
-      background: #fee2e2;
-    }
-
-    .btn-granted {
-      color: #14532d;
-      background: #dcfce7;
-    }
-
-    .btn-granted:disabled {
-      opacity: 1;
+      border-radius: 7px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
     }
 
     button:disabled {
       cursor: not-allowed;
-      opacity: 0.6;
-      box-shadow: none;
+      opacity: 0.72;
     }
 
-    .status-card {
-      margin-top: 14px;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      background: var(--surface-soft);
-      padding: 10px 12px;
-      display: flex;
-      align-items: flex-start;
-      gap: 10px;
-      transition: border-color 0.2s ease, background-color 0.2s ease;
+    .perm-btn.is-pending,
+    .perm-btn.is-denied {
+      background: var(--pending-bg);
+      color: var(--pending-fg);
     }
 
-    .status-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 999px;
-      margin-top: 5px;
-      background: #64748b;
-      flex-shrink: 0;
+    .perm-btn.is-checking {
+      background: var(--wait-bg);
+      color: var(--wait-fg);
     }
 
-    #status-text {
+    .perm-btn.is-granted {
+      background: var(--ok-bg);
+      color: var(--ok-fg);
+    }
+
+    #startButton {
+      background: var(--cta-bg);
+      color: var(--cta-fg);
+    }
+
+    .status-line {
+      margin-top: 4px;
+      min-height: 0;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.25;
+    }
+
+    .status-line p {
       margin: 0;
-      font-size: 13px;
-      line-height: 1.4;
-      font-weight: 600;
-      color: var(--text);
     }
 
-    .status-card[data-tone='neutral'],
-    .status-card[data-tone='ready'] {
-      border-color: var(--border);
-      background: var(--surface-soft);
+    .status-line[data-tone='error'] {
+      color: #991b1b;
     }
 
-    .status-card[data-tone='neutral'] .status-dot,
-    .status-card[data-tone='ready'] .status-dot {
-      background: #64748b;
+    .status-line[data-tone='success'] {
+      color: #14532d;
     }
 
-    .status-card[data-tone='recording'] {
-      border-color: #fcd34d;
-      background: #fffbeb;
+    .status-line[data-tone='recording'] {
+      color: #92400e;
     }
 
-    .status-card[data-tone='recording'] .status-dot {
-      background: var(--recording);
-      animation: pulseDot 1.1s infinite;
-    }
-
-    .status-card[data-tone='processing'] {
-      border-color: #bfdbfe;
-      background: #eff6ff;
-    }
-
-    .status-card[data-tone='processing'] .status-dot {
-      background: var(--processing);
-      animation: pulseDot 1.3s infinite;
-    }
-
-    .status-card[data-tone='success'] {
-      border-color: #bbf7d0;
-      background: #f0fdf4;
-    }
-
-    .status-card[data-tone='success'] .status-dot {
-      background: var(--success);
-    }
-
-    .status-card[data-tone='error'] {
-      border-color: #fecaca;
-      background: #fef2f2;
-    }
-
-    .status-card[data-tone='error'] .status-dot {
-      background: var(--error);
+    .status-line[data-tone='processing'] {
+      color: #1d4ed8;
     }
 
     .hidden {
-      display: none;
-    }
-
-    @keyframes pulseDot {
-      0% {
-        transform: scale(0.95);
-        opacity: 0.9;
-      }
-      50% {
-        transform: scale(1.25);
-        opacity: 0.5;
-      }
-      100% {
-        transform: scale(0.95);
-        opacity: 0.9;
-      }
-    }
-
-    @media (max-width: 420px) {
-      .container {
-        padding: 16px;
-        border-radius: 14px;
-      }
-
-      h3 {
-        font-size: 18px;
-      }
+      display: none !important;
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <h3>Gravador de Auditoria</h3>
-    <p class="subtitle">Permita localizacao e microfone. A finalizacao e envio acontecem quando o formulario for submetido.</p>
-
-    <div class="permissions-stack">
-      <div class="permission-card">
-        <div class="permission-head">
-          <span id="locationPermissionDot" class="permission-dot" data-state="pending" aria-hidden="true"></span>
-          <div class="permission-copy">
-            <p class="permission-title">Localizacao</p>
-            <p id="locationPermissionText" class="permission-help">Permissao pendente.</p>
-          </div>
-        </div>
-        <button id="locationPermissionButton" class="btn-warning">Permitir localizacao</button>
-      </div>
-
-      <div class="permission-card">
-        <div class="permission-head">
-          <span id="microphonePermissionDot" class="permission-dot" data-state="pending" aria-hidden="true"></span>
-          <div class="permission-copy">
-            <p class="permission-title">Microfone</p>
-            <p id="microphonePermissionText" class="permission-help">Permissao pendente.</p>
-          </div>
-        </div>
-        <button id="microphonePermissionButton" class="btn-warning">Permitir microfone</button>
-      </div>
+    <div id="permissions-step" class="actions-row">
+      <button id="locationPermissionButton" class="perm-btn is-pending">Localizacao</button>
+      <button id="microphonePermissionButton" class="perm-btn is-pending">Gravador</button>
     </div>
 
     <div id="recording-step" class="hidden">
-      <button id="startButton" class="btn-success">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>
-        Iniciar Gravacao
-      </button>
+      <button id="startButton">Iniciar Gravacao</button>
     </div>
 
-    <div id="status-card" class="status-card" data-tone="neutral">
-      <span class="status-dot" aria-hidden="true"></span>
-      <p id="status-text">Conceda localizacao e microfone para continuar.</p>
+    <div id="status-card" class="status-line hidden" data-tone="neutral">
+      <p id="status-text"></p>
     </div>
   </div>
 
