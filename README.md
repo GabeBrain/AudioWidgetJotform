@@ -7,6 +7,7 @@ Widget de audio para Jotform com upload seguro no Supabase via URL assinada.
 - `index.html`: widget principal (UI, permissoes, gravacao, integracao Jotform).
 - `supabase/functions/audio-upload-url/index.ts`: Edge Function para gerar URL assinada.
 - `supabase/migrations/20260304_create_audio_upload_events.sql`: tabela opcional para metadados de upload.
+- `docs/payload-v3-tracker-contract.md`: contrato proposto de payload v3 e integracao de tracker no app consumidor.
 
 ## Fluxo atual
 
@@ -34,6 +35,9 @@ Valor enviado no `sendData/sendSubmit`:
 Observacao:
 - O widget ainda consegue ler valor legado (apenas URL) ao abrir `ready`.
 - Para backend/webhook, prefira parsear JSON e usar fallback para URL simples quando necessario.
+- Existe proposta de evolucao para payload v3 com diagnostico de duracao + contrato de tracker:
+  - Ver `docs/payload-v3-tracker-contract.md`.
+  - Objetivo: `durationMs` canonico, rastreabilidade e compatibilidade progressiva com v2/legado.
 
 Exemplo de parser no webhook:
 
