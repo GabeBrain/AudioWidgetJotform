@@ -2,11 +2,15 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 type UploadMetadata = {
   v?: number;
+  recordingId?: string;
   durationMs?: number;
   sizeBytes?: number;
   mimeType?: string;
   extension?: string;
   recordedAt?: string;
+  duration?: Record<string, unknown>;
+  debug?: Record<string, unknown>;
+  trackerConfig?: Record<string, unknown>;
   [key: string]: unknown;
 };
 
@@ -66,6 +70,10 @@ function normalizeMetadata(metadata: unknown): UploadMetadata | null {
   const v = normalizePositiveInt(raw.v);
   if (v !== null) normalized.v = v;
 
+  if (typeof raw.recordingId === "string" && raw.recordingId.trim()) {
+    normalized.recordingId = raw.recordingId.trim();
+  }
+
   const durationMs = normalizePositiveInt(raw.durationMs);
   if (durationMs !== null) normalized.durationMs = durationMs;
 
@@ -82,6 +90,18 @@ function normalizeMetadata(metadata: unknown): UploadMetadata | null {
 
   const recordedAt = normalizeIsoDate(raw.recordedAt);
   if (recordedAt) normalized.recordedAt = recordedAt;
+
+  if (raw.duration && typeof raw.duration === "object" && !Array.isArray(raw.duration)) {
+    normalized.duration = raw.duration as Record<string, unknown>;
+  }
+
+  if (raw.debug && typeof raw.debug === "object" && !Array.isArray(raw.debug)) {
+    normalized.debug = raw.debug as Record<string, unknown>;
+  }
+
+  if (raw.trackerConfig && typeof raw.trackerConfig === "object" && !Array.isArray(raw.trackerConfig)) {
+    normalized.trackerConfig = raw.trackerConfig as Record<string, unknown>;
+  }
 
   return Object.keys(normalized).length ? normalized : null;
 }

@@ -1,4 +1,4 @@
-## audio-upload-url (v2-ready)
+## audio-upload-url (v3-ready)
 
 Edge Function para gerar URL assinada de upload no Supabase Storage, com suporte opcional a metadados do audio.
 
@@ -9,12 +9,13 @@ Edge Function para gerar URL assinada de upload no Supabase Storage, com suporte
   "fileName": "gravacao-1741111111111-d73450ms.webm",
   "contentType": "audio/webm",
   "metadata": {
-    "v": 2,
-    "durationMs": 73450,
-    "sizeBytes": 812345,
+    "v": 3,
+    "recordingId": "8f3614ba-11ce-4e7f-a784-e0e7b3ef76a2",
+    "durationMs": 476812,
+    "sizeBytes": 5492012,
     "mimeType": "audio/webm",
     "extension": "webm",
-    "recordedAt": "2026-03-04T15:20:31.000Z"
+    "recordedAt": "2026-03-06T18:15:30.000Z"
   }
 }
 ```

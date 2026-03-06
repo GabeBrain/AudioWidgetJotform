@@ -14,27 +14,53 @@ Widget de audio para Jotform com upload seguro no Supabase via URL assinada.
 1. Usuario concede permissoes de localizacao e microfone.
 2. Usuario inicia gravacao.
 3. No submit do formulario, o widget finaliza a gravacao e faz upload.
-4. Widget envia o valor para o Jotform em JSON (payload v2).
+4. Widget envia o valor para o Jotform em JSON (payload v3).
 
-## Payload v2 no campo do Jotform
+## Payload v3 no campo do Jotform
 
 Valor enviado no `sendData/sendSubmit`:
 
 ```json
 {
-  "v": 2,
+  "v": 3,
+  "recordingId": "8f3614ba-11ce-4e7f-a784-e0e7b3ef76a2",
   "audioUrl": "https://<project>.supabase.co/storage/v1/object/public/audios/auditorias/gravacao-....webm",
-  "durationMs": 73450,
-  "sizeBytes": 812345,
+  "durationMs": 476812,
+  "duration": {
+    "source": "blobDecoded",
+    "wallClockMs": 1142013,
+    "activeRecordingMs": 480104,
+    "blobDecodedMs": 476812,
+    "driftMs": -333292,
+    "driftPct": -41.14,
+    "computedAt": "2026-03-06T18:15:33.000Z"
+  },
+  "debug": {
+    "startAt": "2026-03-06T17:56:28.000Z",
+    "stopAt": "2026-03-06T18:15:30.000Z",
+    "pauseCount": 2,
+    "resumeCount": 2,
+    "chunksCount": 473,
+    "blobSizeBytes": 5492012,
+    "timesliceMs": 1000,
+    "targetBitrate": 96000
+  },
+  "sizeBytes": 5492012,
   "mimeType": "audio/webm",
   "extension": "webm",
-  "recordedAt": "2026-03-04T15:20:31.000Z"
+  "recordedAt": "2026-03-06T18:15:30.000Z",
+  "trackerConfig": {
+    "version": 1,
+    "canonicalDurationMs": 476812,
+    "durationToleranceMs": 2000,
+    "durationTolerancePct": 10
+  }
 }
 ```
 
 Observacao:
 - O widget ainda consegue ler valor legado (apenas URL) ao abrir `ready`.
-- Para backend/webhook, prefira parsear JSON e usar fallback para URL simples quando necessario.
+- Para backend/webhook, parsear JSON com fallback `v3 -> v2 -> URL simples`.
 - Existe proposta de evolucao para payload v3 com diagnostico de duracao + contrato de tracker:
   - Ver `docs/payload-v3-tracker-contract.md`.
   - Objetivo: `durationMs` canonico, rastreabilidade e compatibilidade progressiva com v2/legado.

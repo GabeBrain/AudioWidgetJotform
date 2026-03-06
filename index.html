@@ -31,13 +31,24 @@
     let appInitPermissionRecheckDone = false;
     let hasRecordingStarted = false;
     let recordingStartedAtMs = 0;
+    let recordingStartedAtIso = '';
+    let currentRecordingId = '';
+    let activeRecordingAccumulatedMs = 0;
+    let activeRecordingSegmentStartedAtMs = 0;
+    let recordingPauseCount = 0;
+    let recordingResumeCount = 0;
     let latestAudioPayload = null;
     let widgetRequiresAudio = false;
     let widgetRequiredTemporarilyDisabled = false;
 
     const RECORDER_TARGET_BITRATE = 96000;
     const RECORDER_TIMESLICE_MS = 1000;
-    const PAYLOAD_VERSION = 2;
+    const PAYLOAD_VERSION = 3;
+    const TRACKER_DURATION_TOLERANCE_MS = 2000;
+    const TRACKER_DURATION_TOLERANCE_PCT = 10;
+    const TRACKER_FLAG_TYPES = Object.freeze(['duvida', 'erro', 'risco', 'followup', 'insight']);
+    const TRACKER_SEVERITY_LEVELS = Object.freeze(['low', 'medium', 'high']);
+    const TRACKER_STATUS_VALUES = Object.freeze(['open', 'in_review', 'resolved']);
     const WIDGET_VALUE_FORMAT = 'json';
     const FORCE_WIDGET_REQUIRED_AT_RUNTIME = false;
     const SHOW_PERMISSION_DEBUG_INFO = false;
@@ -119,9 +130,164 @@
       return { rawValue, payload: null, audioUrl: rawValue };
     }
 
+    function createRecordingId() {
+      if (window.crypto?.randomUUID) {
+        return window.crypto.randomUUID();
+      }
+      const randomChunk = Math.random().toString(36).slice(2, 10);
+      return `rec-${Date.now()}-${randomChunk}`;
+    }
+
+    function normalizeDurationMs(value) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+      return Math.max(0, Math.trunc(value));
+    }
+
+    function roundTo2(value) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+      return Math.round(value * 100) / 100;
+    }
+
+    function resetRecordingRuntimeState() {
+      audioChunks = [];
+      recordingStartedAtMs = 0;
+      recordingStartedAtIso = '';
+      currentRecordingId = '';
+      activeRecordingAccumulatedMs = 0;
+      activeRecordingSegmentStartedAtMs = 0;
+      recordingPauseCount = 0;
+      recordingResumeCount = 0;
+    }
+
+    function openActiveRecordingSegment(startedAtMs) {
+      if (!Number.isFinite(startedAtMs) || startedAtMs <= 0) return;
+      if (activeRecordingSegmentStartedAtMs > 0) return;
+      activeRecordingSegmentStartedAtMs = startedAtMs;
+    }
+
+    function closeActiveRecordingSegment(endedAtMs) {
+      if (!Number.isFinite(endedAtMs) || endedAtMs <= 0) return normalizeDurationMs(activeRecordingAccumulatedMs) || 0;
+      if (activeRecordingSegmentStartedAtMs > 0) {
+        activeRecordingAccumulatedMs += Math.max(0, endedAtMs - activeRecordingSegmentStartedAtMs);
+        activeRecordingSegmentStartedAtMs = 0;
+      }
+      return normalizeDurationMs(activeRecordingAccumulatedMs) || 0;
+    }
+
+    async function getBlobDurationFromMediaElement(blob, timeoutMs = 8000) {
+      if (!(blob instanceof Blob) || blob.size <= 0) return null;
+      return new Promise((resolve) => {
+        const objectUrl = URL.createObjectURL(blob);
+        const audio = document.createElement('audio');
+        let resolved = false;
+        const timer = setTimeout(() => finish(null), timeoutMs);
+
+        function finish(value) {
+          if (resolved) return;
+          resolved = true;
+          clearTimeout(timer);
+          audio.onloadedmetadata = null;
+          audio.onerror = null;
+          try {
+            audio.removeAttribute('src');
+            audio.load();
+          } catch (_) {}
+          URL.revokeObjectURL(objectUrl);
+          resolve(normalizeDurationMs(value));
+        }
+
+        audio.preload = 'metadata';
+        audio.onloadedmetadata = () => {
+          const durationSeconds = Number(audio.duration);
+          if (Number.isFinite(durationSeconds) && durationSeconds > 0) {
+            finish(durationSeconds * 1000);
+            return;
+          }
+          finish(null);
+        };
+        audio.onerror = () => finish(null);
+        audio.src = objectUrl;
+      });
+    }
+
+    async function getBlobDurationFromAudioContext(blob) {
+      const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextCtor || !(blob instanceof Blob) || blob.size <= 0) return null;
+      let audioContext = null;
+      try {
+        audioContext = new AudioContextCtor();
+        const arrayBuffer = await blob.arrayBuffer();
+        const decodedBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+        const durationSeconds = Number(decodedBuffer?.duration);
+        if (Number.isFinite(durationSeconds) && durationSeconds > 0) {
+          return normalizeDurationMs(durationSeconds * 1000);
+        }
+        return null;
+      } catch (err) {
+        logInfo('Fallback de decode via AudioContext falhou.', err?.message || err);
+        return null;
+      } finally {
+        if (audioContext?.close) {
+          try {
+            await audioContext.close();
+          } catch (_) {}
+        }
+      }
+    }
+
+    async function decodeBlobDurationMs(blob) {
+      const fromMetadata = await getBlobDurationFromMediaElement(blob);
+      if (fromMetadata !== null) return fromMetadata;
+      return getBlobDurationFromAudioContext(blob);
+    }
+
+    function resolveCanonicalDuration({ wallClockMs, activeRecordingMs, blobDecodedMs }) {
+      const safeWallClockMs = normalizeDurationMs(wallClockMs) || 0;
+      const safeActiveRecordingMs = normalizeDurationMs(activeRecordingMs) || 0;
+      const safeBlobDecodedMs = normalizeDurationMs(blobDecodedMs);
+      const source = safeBlobDecodedMs !== null ? 'blobDecoded' : 'activeRecording';
+      const canonicalDurationMs = safeBlobDecodedMs !== null ? safeBlobDecodedMs : safeActiveRecordingMs;
+      const driftMs = canonicalDurationMs - safeWallClockMs;
+      const driftPct = safeWallClockMs > 0 ? roundTo2((driftMs / safeWallClockMs) * 100) : 0;
+      return {
+        canonicalDurationMs,
+        source,
+        duration: {
+          source,
+          wallClockMs: safeWallClockMs,
+          activeRecordingMs: safeActiveRecordingMs,
+          blobDecodedMs: safeBlobDecodedMs,
+          driftMs,
+          driftPct
+        }
+      };
+    }
+
+    function buildTrackerConfig(canonicalDurationMs) {
+      return {
+        version: 1,
+        canonicalDurationMs,
+        durationToleranceMs: TRACKER_DURATION_TOLERANCE_MS,
+        durationTolerancePct: TRACKER_DURATION_TOLERANCE_PCT,
+        flagTypes: TRACKER_FLAG_TYPES,
+        severityLevels: TRACKER_SEVERITY_LEVELS,
+        statusValues: TRACKER_STATUS_VALUES,
+        features: {
+          pointMarkers: true,
+          rangeMarkers: true,
+          loopAB: true,
+          comments: true,
+          auditTrail: true
+        }
+      };
+    }
+
     function buildAudioPayload({
+      recordingId,
       audioUrl,
       durationMs,
+      duration,
+      debug,
       sizeBytes,
       mimeType,
       extension,
@@ -129,12 +295,16 @@
     }) {
       return {
         v: PAYLOAD_VERSION,
+        recordingId,
         audioUrl,
         durationMs,
+        duration,
         sizeBytes,
         mimeType,
         extension,
-        recordedAt: recordedAtIso
+        recordedAt: recordedAtIso,
+        debug,
+        trackerConfig: buildTrackerConfig(durationMs)
       };
     }
 
@@ -843,12 +1013,19 @@
           extension: recordedFileExtension,
           bitrate: RECORDER_TARGET_BITRATE
         });
-        audioChunks = [];
+        resetRecordingRuntimeState();
         isRecording = true;
         hasRecordingStarted = true;
         recordingStartedAtMs = Date.now();
+        recordingStartedAtIso = new Date(recordingStartedAtMs).toISOString();
+        currentRecordingId = createRecordingId();
+        openActiveRecordingSegment(recordingStartedAtMs);
         latestAudioUrl = '';
         latestAudioPayload = null;
+        logInfo('Gravacao iniciada.', {
+          recordingId: currentRecordingId,
+          startAt: recordingStartedAtIso
+        });
         if ((FORCE_WIDGET_REQUIRED_AT_RUNTIME || widgetRequiresAudio) && !widgetRequiredTemporarilyDisabled) {
           setWidgetRequiredRuntime(false);
         }
@@ -856,6 +1033,29 @@
 
         mediaRecorder.ondataavailable = (e) => {
           if (e.data.size > 0) audioChunks.push(e.data);
+        };
+
+        mediaRecorder.onpause = () => {
+          const pausedAtMs = Date.now();
+          recordingPauseCount += 1;
+          const activeRecordingMs = closeActiveRecordingSegment(pausedAtMs);
+          logInfo('Gravacao pausada.', {
+            recordingId: currentRecordingId,
+            pauseCount: recordingPauseCount,
+            pausedAt: new Date(pausedAtMs).toISOString(),
+            activeRecordingMs
+          });
+        };
+
+        mediaRecorder.onresume = () => {
+          const resumedAtMs = Date.now();
+          recordingResumeCount += 1;
+          openActiveRecordingSegment(resumedAtMs);
+          logInfo('Gravacao retomada.', {
+            recordingId: currentRecordingId,
+            resumeCount: recordingResumeCount,
+            resumedAt: new Date(resumedAtMs).toISOString()
+          });
         };
 
         recordingFinalizationPromise = new Promise((resolve) => {
@@ -868,20 +1068,49 @@
             updatePermissionUI('uploading');
 
             try {
-              const audioBlob = new Blob(audioChunks, { type: recordedMimeType });
               const recordingEndedAtMs = Date.now();
-              const durationMs = Math.max(0, recordingEndedAtMs - recordingStartedAtMs);
-              const sizeBytes = audioBlob.size;
               const recordedAtIso = new Date(recordingEndedAtMs).toISOString();
+              const wallClockMs = Math.max(0, recordingEndedAtMs - recordingStartedAtMs);
+              const activeRecordingMs = closeActiveRecordingSegment(recordingEndedAtMs);
+              const audioBlob = new Blob(audioChunks, { type: recordedMimeType });
+              const sizeBytes = audioBlob.size;
+              const chunksCount = audioChunks.length;
+              const blobDecodedMs = await decodeBlobDurationMs(audioBlob);
+              const {
+                canonicalDurationMs,
+                duration
+              } = resolveCanonicalDuration({ wallClockMs, activeRecordingMs, blobDecodedMs });
+              const durationPayload = {
+                ...duration,
+                computedAt: recordedAtIso
+              };
+              const debugPayload = {
+                startAt: recordingStartedAtIso || new Date(recordingStartedAtMs).toISOString(),
+                stopAt: recordedAtIso,
+                pauseCount: recordingPauseCount,
+                resumeCount: recordingResumeCount,
+                chunksCount,
+                blobSizeBytes: sizeBytes,
+                timesliceMs: RECORDER_TIMESLICE_MS,
+                targetBitrate: RECORDER_TARGET_BITRATE
+              };
+              logInfo('Metricas de duracao consolidadas.', {
+                recordingId: currentRecordingId,
+                duration: durationPayload,
+                debug: debugPayload
+              });
               const uploadMetadata = {
                 v: PAYLOAD_VERSION,
-                durationMs,
+                recordingId: currentRecordingId,
+                durationMs: canonicalDurationMs,
                 sizeBytes,
                 mimeType: recordedMimeType,
                 extension: recordedFileExtension,
-                recordedAt: recordedAtIso
+                recordedAt: recordedAtIso,
+                duration: durationPayload,
+                debug: debugPayload
               };
-              const fileName = `gravacao-${recordingEndedAtMs}-d${durationMs}ms.${recordedFileExtension}`;
+              const fileName = `gravacao-${recordingEndedAtMs}-d${canonicalDurationMs}ms.${recordedFileExtension}`;
               logInfo('Solicitando URL assinada para upload.', fileName);
               const { uploadUrl, publicUrl } = await requestSignedUpload({
                 fileName,
@@ -902,8 +1131,11 @@
 
               latestAudioUrl = publicUrl;
               latestAudioPayload = buildAudioPayload({
+                recordingId: currentRecordingId,
                 audioUrl: publicUrl,
-                durationMs,
+                durationMs: canonicalDurationMs,
+                duration: durationPayload,
+                debug: debugPayload,
                 sizeBytes,
                 mimeType: recordedMimeType,
                 extension: recordedFileExtension,
@@ -921,7 +1153,7 @@
             } finally {
               isUploading = false;
               recordingFinalizationPromise = null;
-              recordingStartedAtMs = 0;
+              resetRecordingRuntimeState();
               if ((FORCE_WIDGET_REQUIRED_AT_RUNTIME || widgetRequiresAudio) && widgetRequiredTemporarilyDisabled) {
                 setWidgetRequiredRuntime(true);
               }
@@ -941,7 +1173,7 @@
         isRecording = false;
         isUploading = false;
         recordingFinalizationPromise = null;
-        recordingStartedAtMs = 0;
+        resetRecordingRuntimeState();
         if ((FORCE_WIDGET_REQUIRED_AT_RUNTIME || widgetRequiresAudio) && widgetRequiredTemporarilyDisabled) {
           setWidgetRequiredRuntime(true);
         }
