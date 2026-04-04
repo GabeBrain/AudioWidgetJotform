@@ -15,6 +15,15 @@ Este documento define um contrato robusto para o campo do widget no Jotform e pa
 - Jotform/Webhook: recebe e persiste o JSON sem quebrar compatibilidade.
 - App consumidor do audio: usa contrato para player/tracker, flags e marcacoes.
 
+## Atualizacao de upload (2026-04-04)
+
+- Edge atual em producao: `https://egrwllnuutoxjexqkrjv.supabase.co/functions/v1/audio-uploader`
+- Edge anterior (legada): `https://qrnpgskrapnfpksucdvq.supabase.co/functions/v1/audio-upload-url`
+- O widget envia `formID` no POST de signed upload quando o valor esta disponivel.
+- Compatibilidade preservada:
+  - retry sem `metadata`;
+  - fallback sem `formID` quando o backend rejeitar esse campo.
+
 ## Impacto esperado
 
 Estas mudancas podem ficar **restritas ao payload do widget** no curto prazo, mas o sistema consumidor precisa:

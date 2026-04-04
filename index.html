@@ -6,7 +6,7 @@
   <script>
     // Endpoint seguro que gera URL assinada de upload no Supabase
     // Exemplo esperado de resposta: { uploadUrl, publicUrl }
-    const SIGNED_UPLOAD_ENDPOINT = 'https://qrnpgskrapnfpksucdvq.supabase.co/functions/v1/audio-upload-url';
+    const SIGNED_UPLOAD_ENDPOINT = 'https://egrwllnuutoxjexqkrjv.supabase.co/functions/v1/audio-uploader';
   </script>
 
   <!-- 1. Declaracao ANTES do script do Jotform -->
@@ -40,6 +40,7 @@
     let latestAudioPayload = null;
     let widgetRequiresAudio = false;
     let widgetRequiredTemporarilyDisabled = false;
+    let widgetFormId = '';
 
     const RECORDER_TARGET_BITRATE = 96000;
     const RECORDER_TIMESLICE_MS = 1000;
@@ -128,6 +129,56 @@
       }
 
       return { rawValue, payload: null, audioUrl: rawValue };
+    }
+
+    function normalizeFormIdValue(value) {
+      if (value === null || value === undefined) return '';
+      const normalized = String(value).trim();
+      return normalized || '';
+    }
+
+    function extractFormIdFromObject(value) {
+      if (!value || typeof value !== 'object') return '';
+
+      const directKeys = ['formID', 'formId', 'form_id'];
+      for (const key of directKeys) {
+        const normalized = normalizeFormIdValue(value[key]);
+        if (normalized) return normalized;
+      }
+
+      const nestedKeys = ['form', 'data', 'payload', 'params', 'settings', 'config', 'widget', 'context'];
+      for (const key of nestedKeys) {
+        const nested = value[key];
+        if (!nested || typeof nested !== 'object') continue;
+        for (const nestedKey of directKeys) {
+          const normalized = normalizeFormIdValue(nested[nestedKey]);
+          if (normalized) return normalized;
+        }
+      }
+
+      return '';
+    }
+
+    function extractFormIdFromSearch(searchValue) {
+      if (typeof searchValue !== 'string' || !searchValue.trim()) return '';
+      const normalizedSearch = searchValue.startsWith('?') ? searchValue.slice(1) : searchValue;
+      const params = new URLSearchParams(normalizedSearch);
+      const keys = ['formID', 'formId', 'form_id'];
+      for (const key of keys) {
+        const normalized = normalizeFormIdValue(params.get(key));
+        if (normalized) return normalized;
+      }
+      return '';
+    }
+
+    function resolveWidgetFormId(readyPayload = {}) {
+      const fromReadyPayload = extractFormIdFromObject(readyPayload);
+      if (fromReadyPayload) return fromReadyPayload;
+
+      const fromSearch = extractFormIdFromSearch(window?.location?.search || '');
+      if (fromSearch) return fromSearch;
+
+      return '';
     }
 
     function createRecordingId() {
@@ -860,15 +911,19 @@
       }
     }
 
-    async function requestSignedUpload({ fileName, contentType, metadata = null }) {
+    async function requestSignedUpload({ fileName, contentType, metadata = null, formID = '' }) {
       if (!SIGNED_UPLOAD_ENDPOINT) {
         throw new Error('SIGNED_UPLOAD_ENDPOINT nao configurado.');
       }
 
-      const baseBody = { fileName, contentType };
+      const normalizedFormId = normalizeFormIdValue(formID);
+      const baseBody = normalizedFormId
+        ? { fileName, contentType, formID: normalizedFormId }
+        : { fileName, contentType };
       const requestBody = metadata && typeof metadata === 'object'
         ? { ...baseBody, metadata }
         : baseBody;
+      const fallbackBodyWithoutFormId = { fileName, contentType };
 
       const postSignedUploadRequest = (body) => fetch(SIGNED_UPLOAD_ENDPOINT, {
         method: 'POST',
@@ -889,6 +944,19 @@
           metadataFailureDetail?.slice(0, 300) || ''
         );
         response = await postSignedUploadRequest(baseBody);
+      }
+
+      if (!response.ok && normalizedFormId) {
+        let formIdFailureDetail = '';
+        try {
+          formIdFailureDetail = await response.text();
+        } catch (_) {}
+        logInfo(
+          'Endpoint recusou payload com formID; fallback sem formID.',
+          response.status,
+          formIdFailureDetail?.slice(0, 300) || ''
+        );
+        response = await postSignedUploadRequest(fallbackBodyWithoutFormId);
       }
 
       if (!response.ok) {
@@ -1115,7 +1183,8 @@
               const { uploadUrl, publicUrl } = await requestSignedUpload({
                 fileName,
                 contentType: recordedMimeType,
-                metadata: uploadMetadata
+                metadata: uploadMetadata,
+                formID: widgetFormId
               });
 
               logInfo('Enviando arquivo para Supabase via URL assinada.');
@@ -1286,6 +1355,15 @@
         if (typeof readyPayload?.isApp === 'boolean') {
           isJotformAppRuntime = readyPayload.isApp;
           updatePermissionDebugUI();
+        }
+        const resolvedFormId = resolveWidgetFormId(readyPayload);
+        if (resolvedFormId) {
+          widgetFormId = resolvedFormId;
+        }
+        if (widgetFormId) {
+          logInfo('formID do widget resolvido.', widgetFormId);
+        } else {
+          logInfo('formID nao encontrado no contexto do widget; upload segue sem formID.');
         }
         logInfo('Evento ready recebido.', readyPayload);
         if (widgetInitialized) return;

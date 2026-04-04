@@ -5,9 +5,10 @@ Widget de audio para Jotform com upload seguro no Supabase via URL assinada.
 ## Estrutura
 
 - `index.html`: widget principal (UI, permissoes, gravacao, integracao Jotform).
-- `supabase/functions/audio-upload-url/index.ts`: Edge Function para gerar URL assinada.
+- `supabase/functions/audio-upload-url/index.ts`: referencia local/legada da Edge Function antiga.
 - `supabase/migrations/20260304_create_audio_upload_events.sql`: tabela opcional para metadados de upload.
 - `docs/payload-v3-tracker-contract.md`: contrato proposto de payload v3 e integracao de tracker no app consumidor.
+- `supabase/functions/audio-upload-url/README.md`: notas da funcao legada e contexto da migracao.
 
 ## Fluxo atual
 
@@ -15,6 +16,21 @@ Widget de audio para Jotform com upload seguro no Supabase via URL assinada.
 2. Usuario inicia gravacao.
 3. No submit do formulario, o widget finaliza a gravacao e faz upload.
 4. Widget envia o valor para o Jotform em JSON (payload v3).
+
+## Endpoint de upload atual (PRO)
+
+- Edge atual em producao: `https://egrwllnuutoxjexqkrjv.supabase.co/functions/v1/audio-uploader`
+- Comportamento atual do widget:
+  - envia `formID` quando encontrado no contexto do Jotform/URL;
+  - mantem retry sem `metadata`;
+  - mantem fallback sem `formID` para compatibilidade.
+
+## Historico de projetos Supabase usados
+
+| Periodo | Projeto | Edge de upload | Status |
+| --- | --- | --- | --- |
+| ate 2026-04-04 | `qrnpgskrapnfpksucdvq` | `/functions/v1/audio-upload-url` | legado |
+| desde 2026-04-04 | `egrwllnuutoxjexqkrjv` | `/functions/v1/audio-uploader` | atual |
 
 ## Payload v3 no campo do Jotform
 
@@ -80,21 +96,22 @@ function parseWidgetValue(raw) {
 }
 ```
 
-## Supabase: variaveis de ambiente
+## Supabase: variaveis de ambiente (Edge atual `audio-uploader`)
 
 ### Obrigatorias
 
 - `SUPABASE_URL`: URL do projeto Supabase.
 - `SUPABASE_SERVICE_ROLE_KEY`: chave service role para assinar upload e gravar metadados no backend.
 
-Sem essas duas, a funcao `audio-upload-url` nao funciona.
+Sem essas duas, a funcao `audio-uploader` nao funciona.
 
 ### Opcionais
 
-- `AUDIO_UPLOAD_BUCKET` (default: `audios`)
+- `AUDIO_UPLOAD_BUCKET` (default: `auditoria-audios`)
   - Bucket onde o arquivo sera salvo.
-- `AUDIO_UPLOAD_FOLDER` (default: `auditorias`)
-  - Pasta/prefixo dentro do bucket.
+- `AUDIO_UPLOAD_FOLDER` (default: `auditoria`)
+  - Prefixo base de pasta dentro do bucket.
+  - O caminho final inclui o projeto/formulario resolvido pela Edge a partir do `formID`.
 - `AUDIO_UPLOAD_METADATA_TABLE` (default: vazio)
   - Nome da tabela para persistir metadados de upload (ex.: `audio_upload_events`).
   - Se nao definir, a funcao continua funcionando, so nao grava metadados em tabela.
@@ -107,5 +124,8 @@ Sem essas duas, a funcao `audio-upload-url` nao funciona.
 
 ## Observacao de compatibilidade
 
-O frontend ja envia metadata no request da URL assinada e faz fallback se a funcao antiga nao aceitar.
-Assim, da para migrar com baixo risco.
+O frontend envia `metadata` e `formID` quando disponivel, com degradacao progressiva:
+1. tentativa completa (`fileName`, `contentType`, `metadata`, `formID`);
+2. retry sem `metadata`;
+3. fallback sem `formID`.
+Assim, o fluxo antigo continua operando mesmo com backends mais restritivos.
