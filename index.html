@@ -1333,7 +1333,7 @@
             bypassNote: 'Permissions-Policy bloqueio Jotform — audio nao capturado',
             audioUrl: '',
             recordingId: currentRecordingId || null,
-            submittedAt: new Date().toISOString()
+            submittedAt: Date.now()
           });
           sendDataToParent({ value: bypassPayload }, 'submit-bypass');
           flushPendingSendData('submit-bypass');
