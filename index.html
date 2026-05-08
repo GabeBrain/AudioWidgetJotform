@@ -55,9 +55,9 @@
     const SHOW_PERMISSION_DEBUG_INFO = false;
     const SHOW_STATUS_MESSAGES = false;
     const ENABLE_APP_INIT_PERMISSION_RECHECK = true;
-    // Modo provisório: força permissões como concedidas e simula gravação sem acionar APIs de mídia/localização.
-    // Ativar enquanto aguarda Jotform corrigir o Permissions-Policy que está bloqueando geolocation/microphone.
-    const PROVISIONAL_BYPASS_MODE = true;
+    // Bypass automático: ativado em runtime quando Permissions-Policy do documento pai bloqueia as APIs.
+    // Não editar manualmente — controlado por detectAndActivateBypassIfNeeded().
+    let provisionalBypassMode = false;
     const LOCATION_PERMISSION_TIMEOUT_MS = 3200;
     const LOCATION_PERMISSION_MAX_AGE_MS = 15 * 60 * 1000;
     const LOCATION_PERMISSION_BOOT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -735,6 +735,7 @@
       updatePermissionUI('checking');
       logInfo('Solicitando permissao de localizacao.');
 
+      const locationRequestStartedAt = Date.now();
       navigator.geolocation.getCurrentPosition(
         () => {
           logInfo('Permissao de localizacao concedida.');
@@ -746,6 +747,13 @@
           logError('Erro ao obter permissao de localizacao.', err);
           const code = Number(err?.code);
           if (code === 1) {
+            const elapsed = Date.now() - locationRequestStartedAt;
+            if (elapsed < 150) {
+              // Negação instantânea sem diálogo = bloqueio por Permissions-Policy
+              logInfo('[BYPASS] Bloqueio por Permissions-Policy detectado via timing de localizacao.', { elapsed });
+              activateBypassMode('timing-block:geolocation');
+              return;
+            }
             setPermissionState('location', 'denied', source, 'err:code1 denied');
             updatePermissionUI();
             return;
@@ -786,6 +794,7 @@
       setPermissionState('microphone', 'checking', 'probe:microphone', 'solicitando');
       updatePermissionUI('checking');
 
+      const micRequestStartedAt = Date.now();
       try {
         const stream = await getAudioStreamForRecording();
         stream.getTracks().forEach(track => track.stop());
@@ -795,6 +804,13 @@
         logError('Erro ao obter permissao de microfone.', err);
         const errName = err?.name || 'unknown';
         if (['NotAllowedError', 'SecurityError'].includes(errName)) {
+          const elapsed = Date.now() - micRequestStartedAt;
+          if (elapsed < 150) {
+            // Negação instantânea sem diálogo = bloqueio por Permissions-Policy
+            logInfo('[BYPASS] Bloqueio por Permissions-Policy detectado via timing de microfone.', { elapsed });
+            activateBypassMode('timing-block:microphone');
+            return;
+          }
           setPermissionState('microphone', 'denied', 'probe:microphone', `err:${errName}`);
         } else {
           const queried = await queryPermissionState('microphone');
@@ -987,7 +1003,7 @@
     }
 
     async function runAppInitPermissionRecheck(reason = 'init') {
-      if (PROVISIONAL_BYPASS_MODE) return;
+      if (provisionalBypassMode) return;
       const shouldUseAppRecheck = isJotformAppRuntime || isLikelyMobileWebViewRuntime();
       if (!ENABLE_APP_INIT_PERMISSION_RECHECK || !shouldUseAppRecheck || appInitPermissionRecheckDone) {
         return;
@@ -1012,6 +1028,33 @@
       }
     }
 
+    function detectPermissionsPolicyBlock() {
+      try {
+        const fp = document.featurePolicy || document.permissionsPolicy;
+        if (!fp?.allowsFeature) return false;
+        return !fp.allowsFeature('geolocation') || !fp.allowsFeature('microphone');
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function activateBypassMode(reason = 'auto') {
+      if (provisionalBypassMode) return;
+      provisionalBypassMode = true;
+      logInfo('[BYPASS] Modo bypass ativado automaticamente.', reason);
+      setPermissionState('location', 'granted', 'bypass', reason);
+      setPermissionState('microphone', 'granted', 'bypass', reason);
+      updatePermissionUI('bypass');
+    }
+
+    function detectAndActivateBypassIfNeeded() {
+      if (detectPermissionsPolicyBlock()) {
+        activateBypassMode('feature-policy-block');
+        return true;
+      }
+      return false;
+    }
+
     function initializeControls() {
       if (controlsInitialized) return;
 
@@ -1022,7 +1065,7 @@
       if (!locationBtn || !microphoneBtn || !startBtn) return;
 
       locationBtn.addEventListener('click', () => {
-        if (PROVISIONAL_BYPASS_MODE) return;
+        if (provisionalBypassMode) return;
         requestLocationPermission({
           source: 'tap:location',
           timeoutMs: LOCATION_PERMISSION_TIMEOUT_MS,
@@ -1030,7 +1073,7 @@
         });
       });
       microphoneBtn.addEventListener('click', () => {
-        if (PROVISIONAL_BYPASS_MODE) return;
+        if (provisionalBypassMode) return;
         requestMicrophonePermission();
       });
       startBtn.addEventListener('click', startRecording);
@@ -1038,13 +1081,7 @@
       controlsInitialized = true;
       logInfo('Controles iniciais registrados.');
 
-      if (PROVISIONAL_BYPASS_MODE) {
-        logInfo('[BYPASS] Modo provisorio ativo — permissoes simuladas, audio desabilitado.');
-        setPermissionState('location', 'granted', 'bypass', 'provisional-mode');
-        setPermissionState('microphone', 'granted', 'bypass', 'provisional-mode');
-        updatePermissionUI('bypass');
-        return;
-      }
+      if (detectAndActivateBypassIfNeeded()) return;
 
       updatePermissionUI('init');
       refreshPermissionStates('init').catch(err => {
@@ -1079,7 +1116,7 @@
       }
 
       try {
-        if (PROVISIONAL_BYPASS_MODE) {
+        if (provisionalBypassMode) {
           logInfo('[BYPASS] Gravacao simulada iniciada — nenhuma API de midia acessada.');
           resetRecordingRuntimeState();
           isRecording = true;
@@ -1288,7 +1325,7 @@
     }
 
     function stopActiveRecording(reason = 'manual') {
-      if (PROVISIONAL_BYPASS_MODE && isRecording) {
+      if (provisionalBypassMode && isRecording) {
         logInfo('[BYPASS] Parada de gravacao simulada.');
         isRecording = false;
         closeActiveRecordingSegment(Date.now());
@@ -1324,7 +1361,7 @@
       logInfo('Submit acionado pelo Jotform.');
 
       try {
-        if (PROVISIONAL_BYPASS_MODE) {
+        if (provisionalBypassMode) {
           logInfo('[BYPASS] Submit no modo provisorio — enviando valid:true sem audio.');
           const bypassPayload = JSON.stringify({
             v: PAYLOAD_VERSION,
