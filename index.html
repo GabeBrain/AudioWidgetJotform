@@ -55,6 +55,9 @@
     const SHOW_PERMISSION_DEBUG_INFO = false;
     const SHOW_STATUS_MESSAGES = false;
     const ENABLE_APP_INIT_PERMISSION_RECHECK = true;
+    // Modo provisório: força permissões como concedidas e simula gravação sem acionar APIs de mídia/localização.
+    // Ativar enquanto aguarda Jotform corrigir o Permissions-Policy que está bloqueando geolocation/microphone.
+    const PROVISIONAL_BYPASS_MODE = true;
     const LOCATION_PERMISSION_TIMEOUT_MS = 3200;
     const LOCATION_PERMISSION_MAX_AGE_MS = 15 * 60 * 1000;
     const LOCATION_PERMISSION_BOOT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -984,6 +987,7 @@
     }
 
     async function runAppInitPermissionRecheck(reason = 'init') {
+      if (PROVISIONAL_BYPASS_MODE) return;
       const shouldUseAppRecheck = isJotformAppRuntime || isLikelyMobileWebViewRuntime();
       if (!ENABLE_APP_INIT_PERMISSION_RECHECK || !shouldUseAppRecheck || appInitPermissionRecheckDone) {
         return;
@@ -1018,17 +1022,30 @@
       if (!locationBtn || !microphoneBtn || !startBtn) return;
 
       locationBtn.addEventListener('click', () => {
+        if (PROVISIONAL_BYPASS_MODE) return;
         requestLocationPermission({
           source: 'tap:location',
           timeoutMs: LOCATION_PERMISSION_TIMEOUT_MS,
           maximumAgeMs: LOCATION_PERMISSION_MAX_AGE_MS
         });
       });
-      microphoneBtn.addEventListener('click', requestMicrophonePermission);
+      microphoneBtn.addEventListener('click', () => {
+        if (PROVISIONAL_BYPASS_MODE) return;
+        requestMicrophonePermission();
+      });
       startBtn.addEventListener('click', startRecording);
 
       controlsInitialized = true;
       logInfo('Controles iniciais registrados.');
+
+      if (PROVISIONAL_BYPASS_MODE) {
+        logInfo('[BYPASS] Modo provisorio ativo — permissoes simuladas, audio desabilitado.');
+        setPermissionState('location', 'granted', 'bypass', 'provisional-mode');
+        setPermissionState('microphone', 'granted', 'bypass', 'provisional-mode');
+        updatePermissionUI('bypass');
+        return;
+      }
+
       updatePermissionUI('init');
       refreshPermissionStates('init').catch(err => {
         logInfo('Nao foi possivel consultar permissoes iniciais.', err?.message || err);
@@ -1062,6 +1079,26 @@
       }
 
       try {
+        if (PROVISIONAL_BYPASS_MODE) {
+          logInfo('[BYPASS] Gravacao simulada iniciada — nenhuma API de midia acessada.');
+          resetRecordingRuntimeState();
+          isRecording = true;
+          hasRecordingStarted = true;
+          recordingStartedAtMs = Date.now();
+          recordingStartedAtIso = new Date(recordingStartedAtMs).toISOString();
+          currentRecordingId = createRecordingId();
+          openActiveRecordingSegment(recordingStartedAtMs);
+          latestAudioUrl = '';
+          latestAudioPayload = null;
+          if ((FORCE_WIDGET_REQUIRED_AT_RUNTIME || widgetRequiresAudio) && !widgetRequiredTemporarilyDisabled) {
+            setWidgetRequiredRuntime(false);
+          }
+          sendDataToParent({ value: '' }, 'recording-start');
+          setStatus('Gravando..', 'recording');
+          updatePermissionUI('recording-started');
+          return;
+        }
+
         logInfo('Iniciando gravacao.');
         const stream = await getAudioStreamForRecording();
         activeStream = stream;
@@ -1251,6 +1288,15 @@
     }
 
     function stopActiveRecording(reason = 'manual') {
+      if (PROVISIONAL_BYPASS_MODE && isRecording) {
+        logInfo('[BYPASS] Parada de gravacao simulada.');
+        isRecording = false;
+        closeActiveRecordingSegment(Date.now());
+        setStatus('', 'neutral');
+        updatePermissionUI('post-upload');
+        return Promise.resolve();
+      }
+
       if (!mediaRecorder || mediaRecorder.state === 'inactive') {
         return waitForRecordingFinalization();
       }
@@ -1278,6 +1324,23 @@
       logInfo('Submit acionado pelo Jotform.');
 
       try {
+        if (PROVISIONAL_BYPASS_MODE) {
+          logInfo('[BYPASS] Submit no modo provisorio — enviando valid:true sem audio.');
+          const bypassPayload = JSON.stringify({
+            v: PAYLOAD_VERSION,
+            bypass: true,
+            bypassReason: 'provisional-mode',
+            bypassNote: 'Permissions-Policy bloqueio Jotform — audio nao capturado',
+            audioUrl: '',
+            recordingId: currentRecordingId || null,
+            submittedAt: new Date().toISOString()
+          });
+          sendDataToParent({ value: bypassPayload }, 'submit-bypass');
+          flushPendingSendData('submit-bypass');
+          JFCustomWidget.sendSubmit({ valid: true, value: bypassPayload });
+          return;
+        }
+
         if (shouldRequireAudio && !hasRecordingStarted && !getCurrentWidgetValue()) {
           logInfo('Submit bloqueado: gravacao ainda nao iniciada.');
           if (status) setStatus('Inicie a gravacao para continuar.', 'error');

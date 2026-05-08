@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\GaloD\\\\Desktop\\\\SE\\\\Quanti\\\\ProjetoJF1\\\\WidgetAudio\" -Recurse -Force)",
+      "Bash(Select-Object -Property FullName, PSIsContainer)",
+      "Bash(Sort-Object FullName)",
+      "Bash(Format-Table -AutoSize)",
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\GaloD\\\\Desktop\\\\SE\\\\Quanti\\\\ProjetoJF1\\\\WidgetAudio\" -Recurse | ForEach-Object { $_.FullName })",
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\GaloD\\\\Desktop\\\\SE\\\\Quanti\\\\ProjetoJF1\\\\WidgetAudio\\\\frontend\" -Recurse | ForEach-Object { $_.FullName })",
+      "WebFetch(domain:form.jotform.com)"
+    ]
+  }
+}
